@@ -1,0 +1,192 @@
+#!/usr/bin/env perl
+# author:        yanglei@snda.com
+# last modified: 2011-02-31
+# Description:   this script collects interesting data then send to some place for scrunity.
+# Limitation:    diskstat Only support sd* disk currently
+
+use strict;
+use warnings;
+use Time::HiRes;
+use Data::Dumper;
+use File::Path;
+use File::Temp qw( tempfile tempdir );
+use POSIX qw( strftime );
+use Getopt::Long;
+
+
+# explanation of /proc/diskstats
+# Field 1 -- # of reads issued
+# Field 2 -- # of reads merged, field 6 -- # of writes merged
+# Field 3 -- # of sectors read
+# Field 4 -- # of milliseconds spent reading
+# Field 5 -- # of writes completed
+# Field 7 -- # of sectors written
+# Field 8 -- # of milliseconds spent writing
+# Field 9 -- # of I/Os currently in progress
+# Field 10 -- # of milliseconds spent doing I/Os
+# Field 11 -- weighted # of milliseconds spent doing I/Os
+
+sub get_tcpbasic {
+    my $output = `netstat -st`;
+    my $want_re = qr/((?:active\sconnections\sopenings)|(?:passive\sconnection\sopenings)|(?:failed\sconnection\sattempts)|(?:connection\sresets\sreceived))/ixsm;
+
+    #  Tcp:
+    #      759262422 active connections openings
+    #      118115924 passive connection openings
+    #      2406493 failed connection attempts
+    #      2227918 connection resets received
+    my $rc;
+    foreach (split /\n/, $output) {
+        next unless $_ =~ $want_re;
+        chomp;
+
+        my $line = $_;
+
+        my @metric_segment = split/\s/, $1;
+        my ($count) = ($line =~ /\s+(\d+)\s+/ixsm);
+        my $metric = join(q{_}, map { lc($_) } @metric_segment);
+
+        $rc->{$metric} = $count;
+
+        # early break
+        if ($line =~ /connection\sresets\sreceived/ixsm) {
+            last;
+        }
+    }
+
+    return $rc;
+}
+
+sub get_diskstats {
+    my $output = `cat /proc/diskstats | grep -P 'sd[a-z]1'`;
+
+    my $rc;
+    foreach (split /\n/, $output) {
+        chomp;
+
+        my @results = split /\s+/;
+        my $disk = $results[3];
+
+        $rc->{$disk}->{reads_issued}        = $results[4];
+        $rc->{$disk}->{reads_merged}        = $results[5];
+        $rc->{$disk}->{sectors_read}        = $results[6];
+        $rc->{$disk}->{spent_reading}       = $results[7];
+        $rc->{$disk}->{writes_completed}    = $results[8];
+        $rc->{$disk}->{writes_merged}       = $results[9];
+        $rc->{$disk}->{sectors_write}       = $results[10];
+        $rc->{$disk}->{spent_writing}       = $results[11];
+        $rc->{$disk}->{io_currently}        = $results[12];
+        $rc->{$disk}->{spent_io}            = $results[13];
+        $rc->{$disk}->{spent_io_weighted}   = $results[14];
+    }
+
+    return $rc;
+}
+
+sub get_ip {
+    my $output = `ifconfig eth0 | grep 'inet addr' | grep -o -P '\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}' | head -1`;
+    chomp $output;
+    return $output;
+}
+
+sub prepare_metrics {
+    my ($target, $type, $tmp_fh, $tmp_file) = @_;
+
+    open $tmp_fh, '>', $tmp_file or die "Failed to open tmpfile: $tmp_file\n";
+    if ($type eq 'diskstats') {
+        my $rc= get_diskstats();
+
+        foreach my $d (sort keys %{$rc}) {
+            foreach my $item (sort keys %{$rc->{$d}}) {
+                print {$tmp_fh} sprintf("put diskstats.%s %d %d host=%s disk=%s\n",
+                    $item, time(), $rc->{$d}->{$item}, $target, $d);
+            }
+        }
+
+        return 1;
+    }
+    elsif ($type eq 'tcpbasics') {
+        my $rc= get_tcpbasic();
+
+        foreach my $item (sort keys %{$rc}) {
+                print {$tmp_fh} sprintf("put tcpbasic.%s %d %d host=%s\n",
+                    $item, time(), $rc->{$item}, $target);
+        }
+
+        return 1;
+    }
+    else {
+        return 0;
+    }
+}
+
+sub usage {
+    my $ver = '0.1';
+
+    print "This is ocollector, version: $ver\n\n";
+    print "You must provide the collector type, e.,g ./ocollector --type=diskstats\n";
+    print "Full command: ./ocollector --to=op.sdo.com --interval=5 --target=192.168.2.1 --type=diskstats\n";
+}
+
+sub main {
+    my $nc_conn_timeout         = 10;
+    my $ocollector_daemon       = 'op.sdo.com';
+    my $ocollector_interval     = 15;
+    my $ocollector_target       = q{};
+    my $ocollector_type         = q{};
+    my $help;
+
+    GetOptions("to=s" => \$ocollector_daemon,
+               "interval=i" => \$ocollector_interval,
+               "target=s" => \$ocollector_target,
+               "type=s" => \$ocollector_type,
+               "help" => \$help
+               );
+
+    if ($help) {
+        usage;
+        exit 0;
+    }
+
+    my $nc_cmd    = 'nc';
+    my $have_nc   = `which $nc_cmd 2>&1`;
+    my $supported = 'diskstats|tcpbasics';
+
+    if ($have_nc =~ /no\s$nc_cmd\sin/ixsm) {
+        print "ocollector current needs nc command to work and you don't have it.\n";
+        exit 1;
+    }
+
+    if (!$ocollector_type) {
+        usage();
+        exit 1;
+    } elsif ($ocollector_type !~ /^(?:$supported)/ixsm) {
+        print "[$ocollector_type] is not a supported collecting type, availiable type is $supported.\n";
+        exit 1;
+    } else {
+        1;
+    }
+
+    if (!$ocollector_target) {
+        $ocollector_target = get_ip();
+    }
+
+    my $tmp_dir = '/tmp/ocollector';
+    mkpath($tmp_dir) unless -e $tmp_dir;
+    my ($tmp_fh, $tmp_file) = tempfile( 'XXXX', DIR => $tmp_dir, SUFFIX => '.stats');
+
+    for (;;) {
+        if (prepare_metrics($ocollector_target, $ocollector_type, $tmp_fh, $tmp_file)) {
+            my $cmd = "cat $tmp_file | nc -w $nc_conn_timeout $ocollector_daemon 4242";
+
+            printf("%s\t%s\n", strftime("%Y-%m-%d %H:%M:%S", localtime), $cmd);
+            system $cmd;
+        } else {
+            printf("%s\t%s\n", strftime("%Y-%m-%d %H:%M:%S", localtime), "prepare_metrics() failed");
+        }
+
+        sleep($ocollector_interval);
+    }
+}
+
+main();
