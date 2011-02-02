@@ -67,7 +67,7 @@ sub get_tcpbasic {
 }
 
 sub get_diskstats {
-    my $output = `cat /proc/diskstats | grep -P 'sd[a-z]1'`;
+    my $output = `cat /proc/diskstats | grep -P '(?:sd[a-z]\\d*|dm-(?:\\d+))'`;
 
     # explanation of /proc/diskstats
     # Field 1 -- # of reads issued
@@ -86,6 +86,8 @@ sub get_diskstats {
         chomp;
 
         my @results = split /\s+/;
+
+        next if @results != 15;
         my $disk = $results[3];
 
         $rc->{$disk}->{reads_issued}        = $results[4];
@@ -198,7 +200,7 @@ sub log_exception {
 }
 
 sub main {
-    my $ocollector_daemon       = '61.172.242.37';
+    my $ocollector_daemon       = 'op.sdo.com';
     my $ocollector_port         = 4242;
     my $ocollector_proto        = 'tcp';
     my $ocollector_interval     = 15;
