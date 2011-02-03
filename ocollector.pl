@@ -1,21 +1,30 @@
 #!/usr/bin/env perl
 # author:        yanglei@snda.com
-# last modified: 2011-02-02
-# Description:   this script collects interesting data then send to some place for scrunity.
-# Limitation:    diskstat Only support sd* disk currently
+# last modified: 2011-02-03
+# description:   this script collects interesting data then send to some place for scrunity.
 
 use strict;
 use warnings;
-use Time::HiRes;
-use Data::Dumper;
 use File::Path;
-use File::Temp;
 use POSIX qw( strftime );
 use Getopt::Long;
 use IO::Socket;
+use File::ReadBackwards;
 
 my $O_ERROR = '';
 my $SENDER = 'native';
+
+sub parse_http_nginx_v2 {
+    my ($timefrm, $logfile) = @_;
+
+    open my $fh, '<', $logfile;
+
+    if ($fh) {
+
+    } else {
+        return undef;
+    }
+}
 
 # 读取Nginx最后N行的日志，根据5xx的返回码，建立每个URL的情况，以及处理耗时。
 sub parse_http_nginx_v1 {
