@@ -4124,6 +4124,8775 @@ $fatpacked{"Net/Address/IP/Local.pm"} = <<'NET_ADDRESS_IP_LOCAL';
   TRUE;
 NET_ADDRESS_IP_LOCAL
 
+$fatpacked{"Regexp/Common.pm"} = <<'REGEXP_COMMON';
+  package Regexp::Common;
+  
+  use 5.00473;
+  use strict;
+  
+  BEGIN {
+      # This makes sure 'use warnings' doesn't bomb out on 5.005_*;
+      # warnings won't be enabled on those old versions though.
+      # Since all other files use this file, we can use 'use warnings'
+      # elsewhere as well, but *AFTER* 'use Regexp::Common'.
+      if ($] < 5.006) {
+          $INC {"warnings.pm"} = 1;
+          no strict 'refs';
+          *{"warnings::unimport"} = sub {0};
+      }
+  }
+  
+  use warnings;
+  use vars qw /$VERSION %RE %sub_interface $AUTOLOAD/;
+  
+  $VERSION = '2010010201';
+  
+  
+  sub _croak {
+      require Carp;
+      goto &Carp::croak;
+  }
+  
+  sub _carp {
+      require Carp;
+      goto &Carp::carp;
+  }
+  
+  sub new {
+      my ($class, @data) = @_;
+      my %self;
+      tie %self, $class, @data;
+      return \%self;
+  }
+  
+  sub TIEHASH {
+      my ($class, @data) = @_;
+      bless \@data, $class;
+  }
+  
+  sub FETCH {
+      my ($self, $extra) = @_;
+      return bless ref($self)->new(@$self, $extra), ref($self);
+  }
+  
+  my %imports = map {$_ => "Regexp::Common::$_"}
+                qw /balanced CC     comment   delimited lingua list
+                    net      number profanity SEN       URI    whitespace
+                    zip/;
+  
+  sub import {
+      shift;  # Shift off the class.
+      tie %RE, __PACKAGE__;
+      {
+          no strict 'refs';
+          *{caller() . "::RE"} = \%RE;
+      }
+  
+      my $saw_import;
+      my $no_defaults;
+      my %exclude;
+      foreach my $entry (grep {!/^RE_/} @_) {
+          if ($entry eq 'pattern') {
+              no strict 'refs';
+              *{caller() . "::pattern"} = \&pattern;
+              next;
+          }
+          # This used to prevent $; from being set. We still recognize it,
+          # but we won't do anything.
+          if ($entry eq 'clean') {
+              next;
+          }
+          if ($entry eq 'no_defaults') {
+              $no_defaults ++;
+              next;
+          }
+          if (my $module = $imports {$entry}) {
+              $saw_import ++;
+              eval "require $module;";
+              die $@ if $@;
+              next;
+          }
+          if ($entry =~ /^!(.*)/ && $imports {$1}) {
+              $exclude {$1} ++;
+              next;
+          }
+          # As a last resort, try to load the argument.
+          my $module = $entry =~ /^Regexp::Common/
+                              ? $entry
+                              : "Regexp::Common::" . $entry;
+          eval "require $module;";
+          die $@ if $@;
+      }
+  
+      unless ($saw_import || $no_defaults) {
+          foreach my $module (values %imports) {
+              next if $exclude {$module};
+              eval "require $module;";
+              die $@ if $@;
+          }
+      }
+  
+      my %exported;
+      foreach my $entry (grep {/^RE_/} @_) {
+          if ($entry =~ /^RE_(\w+_)?ALL$/) {
+              my $m  = defined $1 ? $1 : "";
+              my $re = qr /^RE_${m}.*$/;
+              while (my ($sub, $interface) = each %sub_interface) {
+                  next if $exported {$sub};
+                  next unless $sub =~ /$re/;
+                  {
+                      no strict 'refs';
+                      *{caller() . "::$sub"} = $interface;
+                  }
+                  $exported {$sub} ++;
+              }
+          }
+          else {
+              next if $exported {$entry};
+              _croak "Can't export unknown subroutine &$entry"
+                  unless $sub_interface {$entry};
+              {
+                  no strict 'refs';
+                  *{caller() . "::$entry"} = $sub_interface {$entry};
+              }
+              $exported {$entry} ++;
+          }
+      }
+  }
+  
+  sub AUTOLOAD { _croak "Can't $AUTOLOAD" }
+  
+  sub DESTROY {}
+  
+  my %cache;
+  
+  my $fpat = qr/^(-\w+)/;
+  
+  sub _decache {
+          my @args = @{tied %{$_[0]}};
+          my @nonflags = grep {!/$fpat/} @args;
+          my $cache = get_cache(@nonflags);
+          _croak "Can't create unknown regex: \$RE{"
+              . join("}{",@args) . "}"
+                  unless exists $cache->{__VAL__};
+          _croak "Perl $] does not support the pattern "
+              . "\$RE{" . join("}{",@args)
+              . "}.\nYou need Perl $cache->{__VAL__}{version} or later"
+                  unless ($cache->{__VAL__}{version}||0) <= $];
+          my %flags = ( %{$cache->{__VAL__}{default}},
+                        map { /$fpat\Q$;\E(.*)/ ? ($1 => $2)
+                            : /$fpat/           ? ($1 => undef)
+                            :                     ()
+                            } @args);
+          $cache->{__VAL__}->_clone_with(\@args, \%flags);
+  }
+  
+  use overload q{""} => \&_decache;
+  
+  
+  sub get_cache {
+          my $cache = \%cache;
+          foreach (@_) {
+                  $cache = $cache->{$_}
+                        || ($cache->{$_} = {});
+          }
+          return $cache;
+  }
+  
+  sub croak_version {
+          my ($entry, @args) = @_;
+  }
+  
+  sub pattern {
+          my %spec = @_;
+          _croak 'pattern() requires argument: name => [ @list ]'
+                  unless $spec{name} && ref $spec{name} eq 'ARRAY';
+          _croak 'pattern() requires argument: create => $sub_ref_or_string'
+                  unless $spec{create};
+  
+          if (ref $spec{create} ne "CODE") {
+                  my $fixed_str = "$spec{create}";
+                  $spec{create} = sub { $fixed_str }
+          }
+  
+          my @nonflags;
+          my %default;
+          foreach ( @{$spec{name}} ) {
+                  if (/$fpat=(.*)/) {
+                          $default{$1} = $2;
+                  }
+                  elsif (/$fpat\s*$/) {
+                          $default{$1} = undef;
+                  }
+                  else {
+                          push @nonflags, $_;
+                  }
+          }
+  
+          my $entry = get_cache(@nonflags);
+  
+          if ($entry->{__VAL__}) {
+                  _carp "Overriding \$RE{"
+                     . join("}{",@nonflags)
+                     . "}";
+          }
+  
+          $entry->{__VAL__} = bless {
+                                  create  => $spec{create},
+                                  match   => $spec{match} || \&generic_match,
+                                  subs    => $spec{subs}  || \&generic_subs,
+                                  version => $spec{version},
+                                  default => \%default,
+                              }, 'Regexp::Common::Entry';
+  
+          foreach (@nonflags) {s/\W/X/g}
+          my $subname = "RE_" . join ("_", @nonflags);
+          $sub_interface{$subname} = sub {
+                  push @_ => undef if @_ % 2;
+                  my %flags = @_;
+                  my $pat = $spec{create}->($entry->{__VAL__},
+                                 {%default, %flags}, \@nonflags);
+                  if (exists $flags{-keep}) { $pat =~ s/\Q(?k:/(/g; }
+                  else { $pat =~ s/\Q(?k:/(?:/g; }
+                  return exists $flags {-i} ? qr /(?i:$pat)/ : qr/$pat/;
+          };
+  
+          return 1;
+  }
+  
+  sub generic_match {$_ [1] =~  /$_[0]/}
+  sub generic_subs  {$_ [1] =~ s/$_[0]/$_[2]/}
+  
+  sub matches {
+          my ($self, $str) = @_;
+          my $entry = $self -> _decache;
+          $entry -> {match} -> ($entry, $str);
+  }
+  
+  sub subs {
+          my ($self, $str, $newstr) = @_;
+          my $entry = $self -> _decache;
+          $entry -> {subs} -> ($entry, $str, $newstr);
+          return $str;
+  }
+  
+  
+  package Regexp::Common::Entry;
+  # use Carp;
+  
+  use overload
+      q{""} => sub {
+          my ($self) = @_;
+          my $pat = $self->{create}->($self, $self->{flags}, $self->{args});
+          if (exists $self->{flags}{-keep}) {
+              $pat =~ s/\Q(?k:/(/g;
+          }
+          else {
+              $pat =~ s/\Q(?k:/(?:/g;
+          }
+          if (exists $self->{flags}{-i})   { $pat = "(?i)$pat" }
+          return $pat;
+      };
+  
+  sub _clone_with {
+      my ($self, $args, $flags) = @_;
+      bless { %$self, args=>$args, flags=>$flags }, ref $self;
+  }
+  
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common - Provide commonly requested regular expressions
+  
+  =head1 SYNOPSIS
+  
+   # STANDARD USAGE 
+  
+   use Regexp::Common;
+  
+   while (<>) {
+       /$RE{num}{real}/               and print q{a number};
+       /$RE{quoted}                   and print q{a ['"`] quoted string};
+       /$RE{delimited}{-delim=>'/'}/  and print q{a /.../ sequence};
+       /$RE{balanced}{-parens=>'()'}/ and print q{balanced parentheses};
+       /$RE{profanity}/               and print q{a #*@%-ing word};
+   }
+  
+  
+   # SUBROUTINE-BASED INTERFACE
+  
+   use Regexp::Common 'RE_ALL';
+  
+   while (<>) {
+       $_ =~ RE_num_real()              and print q{a number};
+       $_ =~ RE_quoted()                and print q{a ['"`] quoted string};
+       $_ =~ RE_delimited(-delim=>'/')  and print q{a /.../ sequence};
+       $_ =~ RE_balanced(-parens=>'()'} and print q{balanced parentheses};
+       $_ =~ RE_profanity()             and print q{a #*@%-ing word};
+   }
+  
+  
+   # IN-LINE MATCHING...
+  
+   if ( $RE{num}{int}->matches($text) ) {...}
+  
+  
+   # ...AND SUBSTITUTION
+  
+   my $cropped = $RE{ws}{crop}->subs($uncropped);
+  
+  
+   # ROLL-YOUR-OWN PATTERNS
+  
+   use Regexp::Common 'pattern';
+  
+   pattern name   => ['name', 'mine'],
+           create => '(?i:J[.]?\s+A[.]?\s+Perl-Hacker)',
+           ;
+  
+   my $name_matcher = $RE{name}{mine};
+  
+   pattern name    => [ 'lineof', '-char=_' ],
+           create  => sub {
+                          my $flags = shift;
+                          my $char = quotemeta $flags->{-char};
+                          return '(?:^$char+$)';
+                      },
+           matches => sub {
+                          my ($self, $str) = @_;
+                          return $str !~ /[^$self->{flags}{-char}]/;
+                      },
+           subs   => sub {
+                          my ($self, $str, $replacement) = @_;
+                          $_[1] =~ s/^$self->{flags}{-char}+$//g;
+                     },
+           ;
+  
+   my $asterisks = $RE{lineof}{-char=>'*'};
+  
+   # DECIDING WHICH PATTERNS TO LOAD.
+  
+   use Regexp::Common qw /comment number/;  # Comment and number patterns.
+   use Regexp::Common qw /no_defaults/;     # Don't load any patterns.
+   use Regexp::Common qw /!delimited/;      # All, but delimited patterns.
+  
+  
+  =head1 DESCRIPTION
+  
+  By default, this module exports a single hash (C<%RE>) that stores or generates
+  commonly needed regular expressions (see L<"List of available patterns">).
+  
+  There is an alternative, subroutine-based syntax described in
+  L<"Subroutine-based interface">.
+  
+  
+  =head2 General syntax for requesting patterns
+  
+  To access a particular pattern, C<%RE> is treated as a hierarchical hash of
+  hashes (of hashes...), with each successive key being an identifier. For
+  example, to access the pattern that matches real numbers, you 
+  specify:
+  
+          $RE{num}{real}
+          
+  and to access the pattern that matches integers: 
+  
+          $RE{num}{int}
+  
+  Deeper layers of the hash are used to specify I<flags>: arguments that
+  modify the resulting pattern in some way. The keys used to access these
+  layers are prefixed with a minus sign and may have a value; if a value
+  is given, it's done by using a multidimensional key.
+  For example, to access the pattern that
+  matches base-2 real numbers with embedded commas separating
+  groups of three digits (e.g. 10,101,110.110101101):
+  
+          $RE{num}{real}{-base => 2}{-sep => ','}{-group => 3}
+  
+  Through the magic of Perl, these flag layers may be specified in any order
+  (and even interspersed through the identifier keys!)
+  so you could get the same pattern with:
+  
+          $RE{num}{real}{-sep => ','}{-group => 3}{-base => 2}
+  
+  or:
+  
+          $RE{num}{-base => 2}{real}{-group => 3}{-sep => ','}
+  
+  or even:
+  
+          $RE{-base => 2}{-group => 3}{-sep => ','}{num}{real}
+  
+  etc.
+  
+  Note, however, that the relative order of amongst the identifier keys
+  I<is> significant. That is:
+  
+          $RE{list}{set}
+  
+  would not be the same as:
+  
+          $RE{set}{list}
+  
+  =head2 Flag syntax
+  
+  In versions prior to 2.113, flags could also be written as
+  C<{"-flag=value"}>. This no longer works, although C<{"-flag$;value"}>
+  still does. However, C<< {-flag => 'value'} >> is the preferred syntax.
+  
+  =head2 Universal flags
+  
+  Normally, flags are specific to a single pattern.
+  However, there is two flags that all patterns may specify.
+  
+  =over 4
+  
+  =item C<-keep>
+  
+  By default, the patterns provided by C<%RE> contain no capturing
+  parentheses. However, if the C<-keep> flag is specified (it requires
+  no value) then any significant substrings that the pattern matches
+  are captured. For example:
+  
+          if ($str =~ $RE{num}{real}{-keep}) {
+                  $number   = $1;
+                  $whole    = $3;
+                  $decimals = $5;
+          }
+  
+  Special care is needed if a "kept" pattern is interpolated into a
+  larger regular expression, as the presence of other capturing
+  parentheses is likely to change the "number variables" into which significant
+  substrings are saved.
+  
+  See also L<"Adding new regular expressions">, which describes how to create
+  new patterns with "optional" capturing brackets that respond to C<-keep>.
+  
+  =item C<-i>
+  
+  Some patterns or subpatterns only match lowercase or uppercase letters.
+  If one wants the do case insensitive matching, one option is to use
+  the C</i> regexp modifier, or the special sequence C<(?i)>. But if the
+  functional interface is used, one does not have this option. The 
+  C<-i> switch solves this problem; by using it, the pattern will do
+  case insensitive matching.
+  
+  =back
+  
+  =head2 OO interface and inline matching/substitution
+  
+  The patterns returned from C<%RE> are objects, so rather than writing:
+  
+          if ($str =~ /$RE{some}{pattern}/ ) {...}
+  
+  you can write:
+  
+          if ( $RE{some}{pattern}->matches($str) ) {...}
+  
+  For matching this would seem to have no great advantage apart from readability
+  (but see below).
+  
+  For substitutions, it has other significant benefits. Frequently you want to
+  perform a substitution on a string without changing the original. Most people
+  use this:
+  
+          $changed = $original;
+          $changed =~ s/$RE{some}{pattern}/$replacement/;
+  
+  The more adept use:
+  
+          ($changed = $original) =~ s/$RE{some}{pattern}/$replacement/;
+  
+  Regexp::Common allows you do write this:
+  
+          $changed = $RE{some}{pattern}->subs($original=>$replacement);
+  
+  Apart from reducing precedence-angst, this approach has the added
+  advantages that the substitution behaviour can be optimized from the 
+  regular expression, and the replacement string can be provided by
+  default (see L<"Adding new regular expressions">).
+  
+  For example, in the implementation of this substitution:
+  
+          $cropped = $RE{ws}{crop}->subs($uncropped);
+  
+  the default empty string is provided automatically, and the substitution is
+  optimized to use:
+  
+          $uncropped =~ s/^\s+//;
+          $uncropped =~ s/\s+$//;
+  
+  rather than:
+  
+          $uncropped =~ s/^\s+|\s+$//g;
+  
+  
+  =head2 Subroutine-based interface
+  
+  The hash-based interface was chosen because it allows regexes to be
+  effortlessly interpolated, and because it also allows them to be
+  "curried". For example:
+  
+          my $num = $RE{num}{int};
+  
+          my $commad     = $num->{-sep=>','}{-group=>3};
+          my $duodecimal = $num->{-base=>12};
+  
+  
+  However, the use of tied hashes does make the access to Regexp::Common
+  patterns slower than it might otherwise be. In contexts where impatience
+  overrules laziness, Regexp::Common provides an additional
+  subroutine-based interface.
+  
+  For each (sub-)entry in the C<%RE> hash (C<$RE{key1}{key2}{etc}>), there
+  is a corresponding exportable subroutine: C<RE_key1_key2_etc()>. The name of
+  each subroutine is the underscore-separated concatenation of the I<non-flag>
+  keys that locate the same pattern in C<%RE>. Flags are passed to the subroutine
+  in its argument list. Thus:
+  
+          use Regexp::Common qw( RE_ws_crop RE_num_real RE_profanity );
+  
+          $str =~ RE_ws_crop() and die "Surrounded by whitespace";
+  
+          $str =~ RE_num_real(-base=>8, -sep=>" ") or next;
+  
+          $offensive = RE_profanity(-keep);
+          $str =~ s/$offensive/$bad{$1}++; "<expletive deleted>"/ge;
+  
+  Note that, unlike the hash-based interface (which returns objects), these
+  subroutines return ordinary C<qr>'d regular expressions. Hence they do not
+  curry, nor do they provide the OO match and substitution inlining described
+  in the previous section.
+  
+  It is also possible to export subroutines for all available patterns like so:
+  
+          use Regexp::Common 'RE_ALL';
+  
+  Or you can export all subroutines with a common prefix of keys like so:
+  
+          use Regexp::Common 'RE_num_ALL';
+  
+  which will export C<RE_num_int> and C<RE_num_real> (and if you have
+  create more patterns who have first key I<num>, those will be exported
+  as well). In general, I<RE_key1_..._keyn_ALL> will export all subroutines
+  whose pattern names have first keys I<key1> ... I<keyn>.
+  
+  
+  =head2 Adding new regular expressions
+  
+  You can add your own regular expressions to the C<%RE> hash at run-time,
+  using the exportable C<pattern> subroutine. It expects a hash-like list of 
+  key/value pairs that specify the behaviour of the pattern. The various
+  possible argument pairs are:
+  
+  =over 4
+  
+  =item C<name =E<gt> [ @list ]>
+  
+  A required argument that specifies the name of the pattern, and any
+  flags it may take, via a reference to a list of strings. For example:
+  
+           pattern name => [qw( line of -char )],
+                   # other args here
+                   ;
+  
+  This specifies an entry C<$RE{line}{of}>, which may take a C<-char> flag.
+  
+  Flags may also be specified with a default value, which is then used whenever
+  the flag is specified without an explicit value (but not when the flag is
+  omitted). For example:
+  
+           pattern name => [qw( line of -char=_ )],
+                   # default char is '_'
+                   # other args here
+                   ;
+  
+  
+  =item C<create =E<gt> $sub_ref_or_string>
+  
+  A required argument that specifies either a string that is to be returned
+  as the pattern:
+  
+          pattern name    => [qw( line of underscores )],
+                  create  => q/(?:^_+$)/
+                  ;
+  
+  or a reference to a subroutine that will be called to create the pattern:
+  
+          pattern name    => [qw( line of -char=_ )],
+                  create  => sub {
+                                  my ($self, $flags) = @_;
+                                  my $char = quotemeta $flags->{-char};
+                                  return '(?:^$char+$)';
+                              },
+                  ;
+  
+  If the subroutine version is used, the subroutine will be called with 
+  three arguments: a reference to the pattern object itself, a reference
+  to a hash containing the flags and their values,
+  and a reference to an array containing the non-flag keys. 
+  
+  Whatever the subroutine returns is stringified as the pattern.
+  
+  No matter how the pattern is created, it is immediately postprocessed to
+  include or exclude capturing parentheses (according to the value of the
+  C<-keep> flag). To specify such "optional" capturing parentheses within
+  the regular expression associated with C<create>, use the notation
+  C<(?k:...)>. Any parentheses of this type will be converted to C<(...)>
+  when the C<-keep> flag is specified, or C<(?:...)> when it is not.
+  It is a Regexp::Common convention that the outermost capturing parentheses
+  always capture the entire pattern, but this is not enforced.
+  
+  
+  =item C<matches =E<gt> $sub_ref>
+  
+  An optional argument that specifies a subroutine that is to be called when
+  the C<$RE{...}-E<gt>matches(...)> method of this pattern is invoked.
+  
+  The subroutine should expect two arguments: a reference to the pattern object
+  itself, and the string to be matched against.
+  
+  It should return the same types of values as a C<m/.../> does.
+  
+       pattern name    => [qw( line of -char )],
+               create  => sub {...},
+               matches => sub {
+                               my ($self, $str) = @_;
+                               $str !~ /[^$self->{flags}{-char}]/;
+                          },
+               ;
+  
+  
+  =item C<subs =E<gt> $sub_ref>
+  
+  An optional argument that specifies a subroutine that is to be called when
+  the C<$RE{...}-E<gt>subs(...)> method of this pattern is invoked.
+  
+  The subroutine should expect three arguments: a reference to the pattern object
+  itself, the string to be changed, and the value to be substituted into it.
+  The third argument may be C<undef>, indicating the default substitution is
+  required.
+  
+  The subroutine should return the same types of values as an C<s/.../.../> does.
+  
+  For example:
+  
+       pattern name    => [ 'lineof', '-char=_' ],
+               create  => sub {...},
+               subs    => sub {
+                            my ($self, $str, $ignore_replacement) = @_;
+                            $_[1] =~ s/^$self->{flags}{-char}+$//g;
+                          },
+               ;
+  
+  Note that such a subroutine will almost always need to modify C<$_[1]> directly.
+  
+  
+  =item C<version =E<gt> $minimum_perl_version>
+  
+  If this argument is given, it specifies the minimum version of perl required
+  to use the new pattern. Attempts to use the pattern with earlier versions of
+  perl will generate a fatal diagnostic.
+  
+  =back
+  
+  =head2 Loading specific sets of patterns.
+  
+  By default, all the sets of patterns listed below are made available.
+  However, it is possible to indicate which sets of patterns should
+  be made available - the wanted sets should be given as arguments to
+  C<use>. Alternatively, it is also possible to indicate which sets of
+  patterns should not be made available - those sets will be given as
+  argument to the C<use> statement, but are preceeded with an exclaimation
+  mark. The argument I<no_defaults> indicates none of the default patterns
+  should be made available. This is useful for instance if all you want
+  is the C<pattern()> subroutine.
+  
+  Examples:
+  
+   use Regexp::Common qw /comment number/;  # Comment and number patterns.
+   use Regexp::Common qw /no_defaults/;     # Don't load any patterns.
+   use Regexp::Common qw /!delimited/;      # All, but delimited patterns.
+  
+  It's also possible to load your own set of patterns. If you have a
+  module C<Regexp::Common::my_patterns> that makes patterns available,
+  you can have it made available with
+  
+   use Regexp::Common qw /my_patterns/;
+  
+  Note that the default patterns will still be made available - only if
+  you use I<no_defaults>, or mention one of the default sets explicitely,
+  the non mentioned defaults aren't made available.
+  
+  =head2 List of available patterns
+  
+  The patterns listed below are currently available. Each set of patterns
+  has its own manual page describing the details. For each pattern set
+  named I<name>, the manual page I<Regexp::Common::name> describes the
+  details.
+  
+  Currently available are:
+  
+  =over 4
+  
+  =item Regexp::Common::balanced
+  
+  Provides regexes for strings with balanced parenthesized delimiters.
+  
+  =item Regexp::Common::comment
+  
+  Provides regexes for comments of various languages (43 languages
+  currently).
+  
+  =item Regexp::Common::delimited
+  
+  Provides regexes for delimited strings.
+  
+  =item Regexp::Common::lingua
+  
+  Provides regexes for palindromes.
+  
+  =item Regexp::Common::list
+  
+  Provides regexes for lists.
+  
+  =item Regexp::Common::net
+  
+  Provides regexes for IPv4 addresses and MAC addresses.
+  
+  =item Regexp::Common::number
+  
+  Provides regexes for numbers (integers and reals).
+  
+  =item Regexp::Common::profanity
+  
+  Provides regexes for profanity.
+  
+  =item Regexp::Common::whitespace
+  
+  Provides regexes for leading and trailing whitespace.
+  
+  =item Regexp::Common::zip
+  
+  Provides regexes for zip codes.
+  
+  =back
+  
+  =head2 Forthcoming patterns and features
+  
+  Future releases of the module will also provide patterns for the following:
+  
+          * email addresses 
+          * HTML/XML tags
+          * more numerical matchers,
+          * mail headers (including multiline ones),
+          * more URLS
+          * telephone numbers of various countries
+          * currency (universal 3 letter format, Latin-1, currency names)
+          * dates
+          * binary formats (e.g. UUencoded, MIMEd)
+  
+  If you have other patterns or pattern generators that you think would be
+  generally useful, please send them to the maintainer -- preferably as source
+  code using the C<pattern> subroutine. Submissions that include a set of
+  tests will be especially welcome.
+  
+  
+  =head1 DIAGNOSTICS
+  
+  =over 4
+  
+  =item C<Can't export unknown subroutine %s>
+  
+  The subroutine-based interface didn't recognize the requested subroutine.
+  Often caused by a spelling mistake or an incompletely specified name.
+  
+          
+  =item C<Can't create unknown regex: $RE{...}>
+  
+  Regexp::Common doesn't have a generator for the requested pattern.
+  Often indicates a mispelt or missing parameter.
+  
+  =item
+  C<Perl %f does not support the pattern $RE{...}.
+  You need Perl %f or later>
+  
+  The requested pattern requires advanced regex features (e.g. recursion)
+  that not available in your version of Perl. Time to upgrade.
+  
+  =item C<< pattern() requires argument: name => [ @list ] >>
+  
+  Every user-defined pattern specification must have a name.
+  
+  =item C<< pattern() requires argument: create => $sub_ref_or_string >>
+  
+  Every user-defined pattern specification must provide a pattern creation
+  mechanism: either a pattern string or a reference to a subroutine that
+  returns the pattern string.
+  
+  =item C<Base must be between 1 and 36>
+  
+  The C<< $RE{num}{real}{-base=>'I<N>'} >> pattern uses the characters [0-9A-Z]
+  to represent the digits of various bases. Hence it only produces
+  regular expressions for bases up to hexatricensimal.
+  
+  =item C<Must specify delimiter in $RE{delimited}>
+  
+  The pattern has no default delimiter.
+  You need to write: C<< $RE{delimited}{-delim=>I<X>'} >> for some character I<X>
+  
+  =back
+  
+  =head1 ACKNOWLEDGEMENTS
+  
+  Deepest thanks to the many people who have encouraged and contributed to this
+  project, especially: Elijah, Jarkko, Tom, Nat, Ed, and Vivek.
+  
+  Further thanks go to: Alexandr Ciornii, Blair Zajac, Bob Stockdale,
+  Charles Thomas, Chris Vertonghen, the CPAN Testers, David Hand,
+  Fany, Geoffrey Leach, Hermann-Marcus Behrens, Jerome Quelin, Jim Cromie,
+  Lars Wilke, Linda Julien, Mike Arms, Mike Castle, Mikko, Murat Uenalan,
+  RafaE<235>l Garcia-Suarez, Ron Savage, Sam Vilain, Slaven Rezic, Smylers,
+  Tim Maher, and all the others I've forgotten.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  For a start, there are many common regexes missing.
+  Send them in to I<regexp-common@abigail.be>.
+  
+  There are some POD issues when installing this module using a pre-5.6.0 perl;
+  some manual pages may not install, or may not install correctly using a perl
+  that is that old. You might consider upgrading your perl.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+REGEXP_COMMON
+
+$fatpacked{"Regexp/Common/CC.pm"} = <<'REGEXP_COMMON_CC';
+  package Regexp::Common::CC;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  use Regexp::Common::_support qw /luhn/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  my @cards = (
+      # Name           Prefix                    Length           mod 10
+      [Mastercard   =>   '5[1-5]',                16,                1],
+      [Visa         =>   '4',                     [13, 16],          1],
+      [Amex         =>   '3[47]',                 15,                1],
+     # Carte Blanche
+     ['Diners Club' =>   '3(?:0[0-5]|[68])',      14,                1],
+      [Discover     =>   '6011',                  16,                1],
+      [enRoute      =>   '2(?:014|149)',          15,                0],
+      [JCB          => [['3',                     16,                1],
+                        ['2131|1800',             15,                1]]],
+  );
+  
+  
+  foreach my $card (@cards) {
+      my ($name, $prefix, $length, $mod) = @$card;
+  
+      # Skip the harder ones for now.
+      next if ref $prefix || ref $length;
+      next unless $mod;
+  
+      my $times = $length + $mod;
+      pattern name    => [CC => $name],
+              version => 5.006,
+              create  => sub {
+                  use re 'eval';
+                  qr <((?=($prefix))[0-9]{$length})
+                      (?(?{Regexp::Common::_support::luhn $1})|(?!))>x
+              }
+      ;
+  }
+  
+  
+  
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::CC -- provide patterns for credit card numbers.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /CC/;
+  
+      while (<>) {
+          /^$RE{CC}{Mastercard}$/   and  print "Mastercard card number\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  Please consult the manual of L<Regexp::Common> for a general description
+  of the works of this interface.
+  
+  Do not use this module directly, but load it via I<Regexp::Common>.
+  
+  This module offers patterns for credit card numbers of several major
+  credit card types. Currently, the supported cards are: I<Mastercard>,
+  I<Amex>, I<Diners Club>, and I<Discover>.
+  
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common> for a general description of how to use this interface.
+  
+  =over 4
+  
+  =item L<http://www.beachnet.com/~hstiles/cardtype.html>
+  
+  Credit Card Validation - Check Digits 
+  
+  =item L<http://euro.ecom.cmu.edu/resources/elibrary/everycc.htm>
+  
+  Everything you ever wanted to know about CC's
+  
+  =item L<http://www.webopedia.com/TERM/L/Luhn_formula.html>
+  
+  Luhn formula
+  
+  =back
+  
+  =head1 AUTHORS
+  
+  Damian Conway S<(I<damian@conway.org>)> and
+  Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty. Send them in to S<I<regexp-common@abigail.be>>.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_CC
+
+$fatpacked{"Regexp/Common/SEN.pm"} = <<'REGEXP_COMMON_SEN';
+  package Regexp::Common::SEN;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  =begin does_not_exist
+  
+  sub par11 {
+      my $string = shift;
+      my $sum    = 0;
+      for my $i (0 .. length ($string) - 1) {
+          my $c = substr ($string, $i, 1);
+          $sum += $c * (length ($string) - $i)
+      }
+      !($sum % 11)
+  }
+  
+  =end does_not_exist
+  =cut
+  
+  # http://www.ssa.gov/history/ssn/geocard.html
+  pattern name   => [qw /SEN USA SSN -sep=-/],
+          create => sub {
+              my $sep = $_ [1] {-sep};
+              "(?k:(?k:[1-9][0-9][0-9]|0[1-9][0-9]|00[1-9])$sep"   .
+                  "(?k:[1-9][0-9]|0[1-9])$sep"                     .
+                  "(?k:[1-9][0-9][0-9][0-9]|0[1-9][0-9][0-9]|"     .
+                                           "00[1-9][0-9]|000[1-9]))"
+          },
+          ;
+  
+  =begin does_not_exist
+  
+  It's not clear whether this is the right checksum.
+  
+  # http://www.google.nl/search?q=cache:8m1zKNYrEO0J:www.enschede.nl/nieuw/projecten/aanbesteding/integratie/pve%2520Bijlage%25207.5.doc+Sofi+nummer+formaat&hl=en&start=56&lr=lang_en|lang_nl&ie=UTF-8
+  pattern name   => [qw /SEN Netherlands SoFi/],
+          create => sub {
+              # 9 digits (d1 d2 d3 d4 d5 d6 d7 d8 d9)
+              # 9*d1 + 8*d2 + 7*d3 + 6*d4 + 5*d5 + 4*d6 + 3*d7 + 2*d8 + 1*d9 
+              # == 0 mod 11.
+              qr /([0-9]{9})(?(?{par11 ($^N)})|(?!))/;
+          }
+          ;
+  
+  =end does_not_exist
+  =cut
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::SEN -- provide regexes for Social-Economical Numbers.
+  
+  =head1 SYNOPSIS
+  
+   use Regexp::Common qw /SEN/;
+  
+   while (<>) {
+       /^$RE{SEN}{USA}{SSN}$/    and  print "Social Security Number\n";
+   }
+  
+  
+  =head1 DESCRIPTION
+  
+  Please consult the manual of L<Regexp::Common> for a general description
+  of the works of this interface.
+  
+  Do not use this module directly, but load it via I<Regexp::Common>.
+  
+  =head2 C<$RE{SEN}{USA}{SSN}{-sep}>
+  
+  Returns a pattern that matches an American Social Security Number (SSN).
+  SSNs consist of three groups of numbers, separated by a hypen (C<->).
+  This pattern only checks for a valid structure, that is, it validates
+  whether a number is valid SSN, was a valid SSN, or maybe a valid SSN
+  in the future. There are almost a billion possible SSNs, and about 
+  400 million are in use, or have been in use. 
+  
+  If C<-sep=I<P>> is specified, the pattern I<P> is used as the
+  separator between the groups of numbers.
+  
+  Under C<-keep> (see L<Regexp::Common>):
+  
+  =over 4
+  
+  =item $1
+  
+  captures the entire SSN.
+  
+  =item $2
+  
+  captures the first group of digits (the area number).
+  
+  =item $3
+  
+  captures the second group of digits (the group number).
+  
+  =item $4
+  
+  captures the third group of digits (the serial number).
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common> for a general description of how to use this interface.
+  
+  =head1 AUTHORS
+  
+  Damian Conway and Abigail.
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  For a start, there are many common regexes missing.
+  Send them in to I<regexp-common@abigail.be>.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_SEN
+
+$fatpacked{"Regexp/Common/URI.pm"} = <<'REGEXP_COMMON_URI';
+  package Regexp::Common::URI;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use Exporter ();
+  use vars qw /@EXPORT_OK @ISA/;
+  
+  @ISA       = qw /Exporter/;
+  @EXPORT_OK = qw /register_uri/;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  # Use 'require' here, not 'use', so we delay running them after we are compiled.
+  # We also do it using an 'eval'; this saves us from have repeated similar
+  # lines. The eval is further explained in 'perldoc -f require'.
+  my @uris = qw /fax file ftp gopher http pop prospero news tel telnet tv wais/;
+  foreach my $uri (@uris) {
+      eval "require Regexp::Common::URI::$uri";
+      die $@ if $@;
+  }
+  
+  my %uris;
+  
+  sub register_uri {
+      my ($scheme, $uri) = @_;
+      $uris {$scheme} = $uri;
+  }
+  
+  pattern name    => [qw (URI)],
+          create  => sub {my $uri =  join '|' => values %uris;
+                             $uri =~ s/\(\?k:/(?:/g;
+                        "(?k:$uri)";
+          },
+          ;
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI -- provide patterns for URIs.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /URI/;
+  
+      while (<>) {
+          /$RE{URI}{HTTP}/       and  print "Contains an HTTP URI.\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  Patterns for the following URIs are supported: fax, file, FTP, gopher,
+  HTTP, news, NTTP, pop, prospero, tel, telnet, tv and WAIS.
+  Each is documented in the I<Regexp::Common::URI::B<scheme>>,
+  manual page, for the appropriate scheme (in lowercase), except for
+  I<NNTP> URIs which are found in I<Regexp::Common::URI::news>.
+  
+  =head2 C<$RE{URI}>
+  
+  Return a pattern that recognizes any of the supported URIs. With
+  C<{-keep}>, only the entire URI is returned (in C<$1>).
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[DRAFT-URI-TV]>
+  
+  Zigmond, D. and Vickers, M: I<Uniform Resource Identifiers for
+  Television Broadcasts>. December 2000.
+  
+  =item B<[DRAFT-URL-FTP]>
+  
+  Casey, James: I<A FTP URL Format>. November 1996.
+  
+  =item B<[RFC 1035]>
+  
+  Mockapetris, P.: I<DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION>.
+  November 1987.
+  
+  =item B<[RFC 1738]>
+  
+  Berners-Lee, Tim, Masinter, L., McCahill, M.: I<Uniform Resource
+  Locators (URL)>. December 1994.
+  
+  =item B<[RFC 2396]>
+  
+  Berners-Lee, Tim, Fielding, R., and Masinter, L.: I<Uniform Resource
+  Identifiers (URI): Generic Syntax>. August 1998.
+  
+  =item B<[RFC 2616]>
+  
+  Fielding, R., Gettys, J., Mogul, J., Frystyk, H., Masinter, L., 
+  Leach, P. and Berners-Lee, Tim: I<Hypertext Transfer Protocol -- HTTP/1.1>.
+  June 1999.
+  
+  =item B<[RFC 2806]>
+  
+  Vaha-Sipila, A.: I<URLs for Telephone Calls>. April 2000.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common> for a general description of how to use this interface.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  For a start, there are many common regexes missing.
+  Send them in to I<regexp-common@abigail.be>.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI
+
+$fatpacked{"Regexp/Common/URI/RFC1035.pm"} = <<'REGEXP_COMMON_URI_RFC1035';
+  package Regexp::Common::URI::RFC1035;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  use vars qw /@EXPORT @EXPORT_OK %EXPORT_TAGS @ISA/;
+  
+  use Exporter ();
+  @ISA = qw /Exporter/;
+  
+  my %vars;
+  
+  BEGIN {
+      $vars {low}     = [qw /$digit $letter $let_dig $let_dig_hyp $ldh_str/];
+      $vars {parts}   = [qw /$label $subdomain/];
+      $vars {domain}  = [qw /$domain/];
+  }
+  
+  use vars map {@$_} values %vars;
+  
+  @EXPORT      = qw /$host/;
+  @EXPORT_OK   = map {@$_} values %vars;
+  %EXPORT_TAGS = (%vars, ALL => [@EXPORT_OK]);
+  
+  # RFC 1035.
+  $digit             = "[0-9]";
+  $letter            = "[A-Za-z]";
+  $let_dig           = "[A-Za-z0-9]";
+  $let_dig_hyp       = "[-A-Za-z0-9]";
+  $ldh_str           = "(?:[-A-Za-z0-9]+)";
+  $label             = "(?:$letter(?:(?:$ldh_str){0,61}$let_dig)?)";
+  $subdomain         = "(?:$label(?:[.]$label)*)";
+  $domain            = "(?: |(?:$subdomain))";
+  
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::RFC1035 -- Definitions from RFC1035;
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common::URI::RFC1035 qw /:ALL/;
+  
+  =head1 DESCRIPTION
+  
+  This package exports definitions from RFC1035. It's intended
+  usage is for Regexp::Common::URI submodules only. Its interface
+  might change without notice.
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 1035]>
+  
+  Mockapetris, P.: I<DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION>.
+  November 1987.
+  
+  =back
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_RFC1035
+
+$fatpacked{"Regexp/Common/URI/RFC1738.pm"} = <<'REGEXP_COMMON_URI_RFC1738';
+  package Regexp::Common::URI::RFC1738;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  use vars qw /@EXPORT @EXPORT_OK %EXPORT_TAGS @ISA/;
+  
+  use Exporter ();
+  @ISA = qw /Exporter/;
+  
+  
+  my %vars;
+  
+  BEGIN {
+      $vars {low}     = [qw /$digit $digits $hialpha $lowalpha $alpha $alphadigit
+                             $safe $extra $national $punctuation $unreserved
+                             $unreserved_range $reserved $uchar $uchars $xchar
+                             $xchars $hex $escape/];
+  
+      $vars {connect} = [qw /$port $hostnumber $toplabel $domainlabel $hostname
+                             $host $hostport $user $password $login/];
+  
+      $vars {parts}   = [qw /$fsegment $fpath $group $article $grouppart
+                             $search $database $wtype $wpath $psegment
+                             $fieldname $fieldvalue $fieldspec $ppath/];
+  }
+  
+  use vars map {@$_} values %vars;
+  
+  @EXPORT      = qw /$host/;
+  @EXPORT_OK   = map {@$_} values %vars;
+  %EXPORT_TAGS = (%vars, ALL => [@EXPORT_OK]);
+  
+  # RFC 1738, base definitions.
+  
+  # Lowlevel definitions.
+  $digit             =  '[0-9]';
+  $digits            =  '[0-9]+';
+  $hialpha           =  '[A-Z]';
+  $lowalpha          =  '[a-z]';
+  $alpha             =  '[a-zA-Z]';                 # lowalpha | hialpha
+  $alphadigit        =  '[a-zA-Z0-9]';              # alpha    | digit
+  $safe              =  '[-$_.+]';
+  $extra             =  "[!*'(),]";
+  $national          =  '[][{}|\\^~`]';
+  $punctuation       =  '[<>#%"]';
+  $unreserved_range  = q [-a-zA-Z0-9$_.+!*'(),];  # alphadigit | safe | extra
+  $unreserved        =  "[$unreserved_range]";
+  $reserved          =  '[;/?:@&=]';
+  $hex               =  '[a-fA-F0-9]';
+  $escape            =  "(?:%$hex$hex)";
+  $uchar             =  "(?:$unreserved|$escape)";
+  $uchars            =  "(?:(?:$unreserved|$escape)*)";
+  $xchar             =  "(?:[$unreserved_range;/?:\@&=]|$escape)";
+  $xchars            =  "(?:(?:[$unreserved_range;/?:\@&=]|$escape)*)";
+  
+  # Connection related stuff.
+  $port              =  "(?:$digits)";
+  $hostnumber        =  "(?:$digits\[.]$digits\[.]$digits\[.]$digits)";
+  $toplabel          =  "(?:$alpha\[-a-zA-Z0-9]*$alphadigit|$alpha)";
+  $domainlabel       =  "(?:(?:$alphadigit\[-a-zA-Z0-9]*)?$alphadigit)";
+  $hostname          =  "(?:(?:$domainlabel\[.])*$toplabel)";
+  $host              =  "(?:$hostname|$hostnumber)";
+  $hostport          =  "(?:$host(?::$port)?)";
+  
+  $user              =  "(?:(?:[$unreserved_range;?&=]|$escape)*)";
+  $password          =  "(?:(?:[$unreserved_range;?&=]|$escape)*)";
+  $login             =  "(?:(?:$user(?::$password)?\@)?$hostport)";
+  
+  # Parts (might require more if we add more URIs).
+  
+  # FTP/file
+  $fsegment          =  "(?:(?:[$unreserved_range:\@&=]|$escape)*)";
+  $fpath             =  "(?:$fsegment(?:/$fsegment)*)";
+  
+  # NNTP/news.
+  $group             =  "(?:$alpha\[-A-Za-z0-9.+_]*)";
+  $article           =  "(?:(?:[$unreserved_range;/?:&=]|$escape)+" .
+                        '@' . "$host)";
+  $grouppart         =  "(?:[*]|$article|$group)"; # It's important that
+                                                   # $article goes before
+                                                   # $group.
+  
+  # WAIS.
+  $search            =  "(?:(?:[$unreserved_range;:\@&=]|$escape)*)";
+  $database          =  $uchars;
+  $wtype             =  $uchars;
+  $wpath             =  $uchars;
+  
+  # prospero
+  $psegment          =  "(?:(?:[$unreserved_range?:\@&=]|$escape)*)";
+  $fieldname         =  "(?:(?:[$unreserved_range?:\@&]|$escape)*)";
+  $fieldvalue        =  "(?:(?:[$unreserved_range?:\@&]|$escape)*)";
+  $fieldspec         =  "(?:;$fieldname=$fieldvalue)";
+  $ppath             =  "(?:$psegment(?:/$psegment)*)";
+  
+  #
+  # The various '(?:(?:[$unreserved_range ...]|$escape)*)' above need
+  # some loop unrolling to speed up the match.
+  #
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::RFC1738 -- Definitions from RFC1738;
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common::URI::RFC1738 qw /:ALL/;
+  
+  =head1 DESCRIPTION
+  
+  This package exports definitions from RFC1738. It's intended
+  usage is for Regexp::Common::URI submodules only. Its interface
+  might change without notice.
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 1738]>
+  
+  Berners-Lee, Tim, Masinter, L., McCahill, M.: I<Uniform Resource
+  Locators (URL)>. December 1994.
+  
+  =back
+  
+  =head1 AUTHOR
+  
+  Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_RFC1738
+
+$fatpacked{"Regexp/Common/URI/RFC1808.pm"} = <<'REGEXP_COMMON_URI_RFC1808';
+  package Regexp::Common::URI::RFC1808;
+  
+  BEGIN {
+      # This makes sure 'use warnings' doesn't bomb out on 5.005_*;
+      # warnings won't be enabled on those old versions though.
+      if ($] < 5.006 && !exists $INC {"warnings.pm"}) {
+          $INC {"warnings.pm"} = 1;
+          no strict 'refs';
+          *{"warnings::unimport"} = sub {0};
+      }
+  }
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  use vars qw /@EXPORT @EXPORT_OK %EXPORT_TAGS @ISA/;
+  
+  use Exporter ();
+  @ISA = qw /Exporter/;
+  
+  
+  my %vars;
+  
+  BEGIN {
+      $vars {low}     = [qw /$punctuation $reserved_range $reserved $national
+                             $extra $safe $digit $digits $hialpha $lowalpha
+                             $alpha $alphadigit $hex $escape $unreserved_range
+                             $unreserved $uchar $uchars $pchar_range $pchar
+                             $pchars/],
+  
+      $vars {parts}   = [qw /$fragment $query $param $params $segment
+                             $fsegment $path $net_loc $scheme $rel_path
+                             $abs_path $net_path $relativeURL $generic_RL
+                             $absoluteURL $URL/],
+  }
+  
+  use vars map {@$_} values %vars;
+  
+  @EXPORT      = qw /$host/;
+  @EXPORT_OK   = map {@$_} values %vars;
+  %EXPORT_TAGS = (%vars, ALL => [@EXPORT_OK]);
+  
+  # RFC 1808, base definitions.
+  
+  # Lowlevel definitions.
+  $punctuation       =  '[<>#%"]';
+  $reserved_range    = q [;/?:@&=];
+  $reserved          =  "[$reserved_range]";
+  $national          =  '[][{}|\\^~`]';
+  $extra             =  "[!*'(),]";
+  $safe              =  '[-$_.+]';
+  
+  $digit             =  '[0-9]';
+  $digits            =  '[0-9]+';
+  $hialpha           =  '[A-Z]';
+  $lowalpha          =  '[a-z]';
+  $alpha             =  '[a-zA-Z]';                 # lowalpha | hialpha
+  $alphadigit        =  '[a-zA-Z0-9]';              # alpha    | digit
+  
+  $hex               =  '[a-fA-F0-9]';
+  $escape            =  "(?:%$hex$hex)";
+  
+  $unreserved_range  = q [-a-zA-Z0-9$_.+!*'(),];  # alphadigit | safe | extra
+  $unreserved        =  "[$unreserved_range]";
+  $uchar             =  "(?:$unreserved|$escape)";
+  $uchars            =  "(?:(?:$unreserved+|$escape)*)";
+  
+  $pchar_range       = qq [$unreserved_range:\@&=];
+  $pchar             =  "(?:[$pchar_range]|$escape)";
+  $pchars            =  "(?:(?:[$pchar_range]+|$escape)*)";
+  
+  
+  # Parts
+  $fragment          =  "(?:(?:[$unreserved_range$reserved_range]+|$escape)*)";
+  $query             =  "(?:(?:[$unreserved_range$reserved_range]+|$escape)*)";
+  
+  $param             =  "(?:(?:[$pchar_range/]+|$escape)*)";
+  $params            =  "(?:$param(?:;$param)*)";
+  
+  $segment           =  "(?:(?:[$pchar_range]+|$escape)*)";
+  $fsegment          =  "(?:(?:[$pchar_range]+|$escape)+)";
+  $path              =  "(?:$fsegment(?:/$segment)*)";
+  
+  $net_loc           =  "(?:(?:[$pchar_range;?]+|$escape)*)";
+  $scheme            =  "(?:(?:[-a-zA-Z0-9+.]+|$escape)+)";
+  
+  $rel_path          =  "(?:$path?(?:;$params)?(?:?$query)?)";
+  $abs_path          =  "(?:/$rel_path)";
+  $net_path          =  "(?://$net_loc$abs_path?)";
+  
+  $relativeURL       =  "(?:$net_path|$abs_path|$rel_path)";
+  $generic_RL        =  "(?:$scheme:$relativeURL)";
+  $absoluteURL       =  "(?:$generic_RL|" .
+                  "(?:$scheme:(?:[$unreserved_range$reserved_range]+|$escape)*))";
+  $URL               =  "(?:(?:$absoluteURL|$relativeURL)(?:#$fragment)?)";
+  
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::RFC1808 -- Definitions from RFC1808;
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common::URI::RFC1808 qw /:ALL/;
+  
+  =head1 DESCRIPTION
+  
+  This package exports definitions from RFC1808. It's intended
+  usage is for Regexp::Common::URI submodules only. Its interface
+  might change without notice.
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 1808]>
+  
+  Fielding, R.: I<Relative Uniform Resource Locators (URL)>. June 1995.
+  
+  =back
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_RFC1808
+
+$fatpacked{"Regexp/Common/URI/RFC2384.pm"} = <<'REGEXP_COMMON_URI_RFC2384';
+  package Regexp::Common::URI::RFC2384;
+  
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  use Regexp::Common::URI::RFC1738 qw /$unreserved_range $escape $hostport/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  use vars qw /@EXPORT @EXPORT_OK %EXPORT_TAGS @ISA/;
+  
+  use Exporter ();
+  @ISA = qw /Exporter/;
+  
+  
+  my %vars;
+  
+  BEGIN {
+      $vars {low}     = [qw /$achar_range $achar $achars $achar_more/];
+      $vars {connect} = [qw /$enc_sasl $enc_user $enc_ext $enc_auth_type $auth
+                             $user_auth $server/];
+      $vars {parts}   = [qw /$pop_url/];
+  }
+  
+  use vars map {@$_} values %vars;
+  
+  @EXPORT      = qw /$host/;
+  @EXPORT_OK   = map {@$_} values %vars;
+  %EXPORT_TAGS = (%vars, ALL => [@EXPORT_OK]);
+  
+  # RFC 2384, POP3.
+  
+  # Lowlevel definitions.
+  $achar_range       =  "$unreserved_range&=~";
+  $achar             =  "(?:[$achar_range]|$escape)";
+  $achars            =  "(?:(?:[$achar_range]+|$escape)*)";
+  $achar_more        =  "(?:(?:[$achar_range]+|$escape)+)";
+  $enc_sasl          =  $achar_more;
+  $enc_user          =  $achar_more;
+  $enc_ext           =  "(?:[+](?:APOP|$achar_more))";
+  $enc_auth_type     =  "(?:$enc_sasl|$enc_ext)";
+  $auth              =  "(?:;AUTH=(?:[*]|$enc_auth_type))";
+  $user_auth         =  "(?:$enc_user$auth?)";
+  $server            =  "(?:(?:$user_auth\@)?$hostport)";
+  $pop_url           =  "(?:pop://$server)";
+  
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::RFC2384 -- Definitions from RFC2384;
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common::URI::RFC2384 qw /:ALL/;
+  
+  =head1 DESCRIPTION
+  
+  This package exports definitions from RFC2384. It's intended
+  usage is for Regexp::Common::URI submodules only. Its interface
+  might change without notice.
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 2384]>
+  
+  Gellens, R.: I<POP URL scheme> August 1998.
+  
+  =back
+  
+  =head1 AUTHOR
+  
+  Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_RFC2384
+
+$fatpacked{"Regexp/Common/URI/RFC2396.pm"} = <<'REGEXP_COMMON_URI_RFC2396';
+  package Regexp::Common::URI::RFC2396;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  use vars qw /@EXPORT @EXPORT_OK %EXPORT_TAGS @ISA/;
+  
+  use Exporter ();
+  @ISA = qw /Exporter/;
+  
+  
+  my %vars;
+  
+  BEGIN {
+      $vars {low}     = [qw /$digit $upalpha $lowalpha $alpha $alphanum $hex
+                             $escaped $mark $unreserved $reserved $pchar $uric
+                             $urics $userinfo $userinfo_no_colon $uric_no_slash/];
+      $vars {parts}   = [qw /$query $fragment $param $segment $path_segments
+                             $ftp_segments $rel_segment $abs_path $rel_path
+                             $path/];
+      $vars {connect} = [qw /$port $IPv4address $toplabel $domainlabel $hostname
+                             $host $hostport $server $reg_name $authority/];
+      $vars {URI}     = [qw /$scheme $net_path $opaque_part $hier_part
+                             $relativeURI $absoluteURI $URI_reference/];
+  }
+  
+  use vars map {@$_} values %vars;
+  
+  @EXPORT      = ();
+  @EXPORT_OK   = map {@$_} values %vars;
+  %EXPORT_TAGS = (%vars, ALL => [@EXPORT_OK]);
+  
+  # RFC 2396, base definitions.
+  $digit             =  '[0-9]';
+  $upalpha           =  '[A-Z]';
+  $lowalpha          =  '[a-z]';
+  $alpha             =  '[a-zA-Z]';                # lowalpha | upalpha
+  $alphanum          =  '[a-zA-Z0-9]';             # alpha    | digit
+  $hex               =  '[a-fA-F0-9]';
+  $escaped           =  "(?:%$hex$hex)";
+  $mark              =  "[\\-_.!~*'()]";
+  $unreserved        =  "[a-zA-Z0-9\\-_.!~*'()]";  # alphanum | mark
+                        # %61-%7A, %41-%5A, %30-%39
+                        #  a - z    A - Z    0 - 9
+                        # %21, %27, %28, %29, %2A, %2D, %2E, %5F, %7E
+                        #  !    '    (    )    *    -    .    _    ~
+  $reserved          =  "[;/?:@&=+\$,]";
+  $pchar             =  "(?:[a-zA-Z0-9\\-_.!~*'():\@&=+\$,]|$escaped)";
+                                        # unreserved | escaped | [:@&=+$,]
+  $uric              =  "(?:[;/?:\@&=+\$,a-zA-Z0-9\\-_.!~*'()]|$escaped)";
+                                        # reserved | unreserved | escaped
+  $urics             =  "(?:(?:[;/?:\@&=+\$,a-zA-Z0-9\\-_.!~*'()]+|"     .
+                        "$escaped)*)";
+  
+  $query             =  $urics;
+  $fragment          =  $urics;
+  $param             =  "(?:(?:[a-zA-Z0-9\\-_.!~*'():\@&=+\$,]+|$escaped)*)";
+  $segment           =  "(?:$param(?:;$param)*)";
+  $path_segments     =  "(?:$segment(?:/$segment)*)";
+  $ftp_segments      =  "(?:$param(?:/$param)*)";   # NOT from RFC 2396.
+  $rel_segment       =  "(?:(?:[a-zA-Z0-9\\-_.!~*'();\@&=+\$,]*|$escaped)+)";
+  $abs_path          =  "(?:/$path_segments)";
+  $rel_path          =  "(?:$rel_segment(?:$abs_path)?)";
+  $path              =  "(?:(?:$abs_path|$rel_path)?)";
+  
+  $port              =  "(?:$digit*)";
+  $IPv4address       =  "(?:$digit+[.]$digit+[.]$digit+[.]$digit+)";
+  $toplabel          =  "(?:$alpha"."[-a-zA-Z0-9]*$alphanum|$alpha)";
+  $domainlabel       =  "(?:(?:$alphanum"."[-a-zA-Z0-9]*)?$alphanum)";
+  $hostname          =  "(?:(?:$domainlabel\[.])*$toplabel\[.]?)";
+  $host              =  "(?:$hostname|$IPv4address)";
+  $hostport          =  "(?:$host(?::$port)?)";
+  
+  $userinfo          =  "(?:(?:[a-zA-Z0-9\\-_.!~*'();:&=+\$,]+|$escaped)*)";
+  $userinfo_no_colon =  "(?:(?:[a-zA-Z0-9\\-_.!~*'();&=+\$,]+|$escaped)*)";
+  $server            =  "(?:(?:$userinfo\@)?$hostport)";
+  
+  $reg_name          =  "(?:(?:[a-zA-Z0-9\\-_.!~*'()\$,;:\@&=+]*|$escaped)+)";
+  $authority         =  "(?:$server|$reg_name)";
+  
+  $scheme            =  "(?:$alpha"."[a-zA-Z0-9+\\-.]*)";
+  
+  $net_path          =  "(?://$authority$abs_path?)";
+  $uric_no_slash     =  "(?:[a-zA-Z0-9\\-_.!~*'();?:\@&=+\$,]|$escaped)";
+  $opaque_part       =  "(?:$uric_no_slash$urics)";
+  $hier_part         =  "(?:(?:$net_path|$abs_path)(?:[?]$query)?)";
+  
+  $relativeURI       =  "(?:(?:$net_path|$abs_path|$rel_path)(?:[?]$query)?";
+  $absoluteURI       =  "(?:$scheme:(?:$hier_part|$opaque_part))";
+  $URI_reference     =  "(?:(?:$absoluteURI|$relativeURI)?(?:#$fragment)?)";
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::RFC2396 -- Definitions from RFC2396;
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common::URI::RFC2396 qw /:ALL/;
+  
+  =head1 DESCRIPTION
+  
+  This package exports definitions from RFC2396. It's intended
+  usage is for Regexp::Common::URI submodules only. Its interface
+  might change without notice.
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 2396]>
+  
+  Berners-Lee, Tim, Fielding, R., and Masinter, L.: I<Uniform Resource
+  Identifiers (URI): Generic Syntax>. August 1998.
+  
+  =back
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_RFC2396
+
+$fatpacked{"Regexp/Common/URI/RFC2806.pm"} = <<'REGEXP_COMMON_URI_RFC2806';
+  package Regexp::Common::URI::RFC2806;
+  
+  use Regexp::Common::URI::RFC1035 qw /$domain/;
+  use Regexp::Common::URI::RFC2396 qw /$unreserved $escaped $hex/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  use vars qw /@EXPORT @EXPORT_OK %EXPORT_TAGS @ISA/;
+  
+  use Exporter ();
+  @ISA = qw /Exporter/;
+  
+  
+  my %vars;
+  
+  BEGIN {
+      $vars {low}     = [qw /$dtmf_digit $wait_for_dial_tone $one_second_pause
+                             $pause_character $visual_separator $phonedigit
+                             $escaped_no_dquote $quoted_string $token_char
+                             $token_chars/];
+      $vars {parts}   = [qw /$future_extension/];
+      $vars {connect} = [qw /$provider_hostname $provider_tag $service_provider
+                             $private_prefix $local_network_prefix 
+                             $global_network_prefix $network_prefix/];
+      $vars {phone}   = [qw /$phone_context_ident $phone_context_tag
+                             $area_specifier $post_dial $isdn_subaddress
+                             $t33_subaddress $local_phone_number
+                             $local_phone_number_no_future
+                             $base_phone_number $global_phone_number
+                             $global_phone_number_no_future $telephone_subscriber
+                             $telephone_subscriber_no_future/];
+      $vars {fax}     = [qw /$fax_local_phone $fax_local_phone_no_future
+                             $fax_global_phone $fax_global_phone_no_future
+                             $fax_subscriber $fax_subscriber_no_future/];
+      $vars {modem}   = [qw //];
+  }
+  
+  use vars map {@$_} values %vars;
+  
+  @EXPORT      = ();
+  @EXPORT_OK   = map {@$_} values %vars;
+  %EXPORT_TAGS = (%vars, ALL => [@EXPORT_OK]);
+  
+  
+  # RFC 2806, URIs for tel, fax & modem.
+  $dtmf_digit        =  "(?:[*#ABCD])";
+  $wait_for_dial_tone=  "(?:w)";
+  $one_second_pause  =  "(?:p)";
+  $pause_character   =  "(?:[wp])";   # wait_for_dial_tone | one_second_pause.
+  $visual_separator  =  "(?:[\\-.()])";
+  $phonedigit        =  "(?:[0-9\\-.()])";  # DIGIT | visual_separator
+  $escaped_no_dquote =  "(?:%(?:[01]$hex)|2[013-9A-Fa-f]|[3-9A-Fa-f]$hex)";
+  $quoted_string     =  "(?:%22(?:(?:%5C(?:$unreserved|$escaped))|" .
+                                "$unreserved+|$escaped_no_dquote)*%22)";
+                        # It is unclear wether we can allow only unreserved
+                        # characters to unescaped, or can we also use uric
+                        # characters that are unescaped? Or pchars?
+  $token_char        =  "(?:[!'*\\-.0-9A-Z_a-z~]|" .
+                            "%(?:2[13-7ABDEabde]|3[0-9]|4[1-9A-Fa-f]|" .
+                                "5[AEFaef]|6[0-9A-Fa-f]|7[0-9ACEace]))";
+                        # Only allowing unreserved chars to be unescaped.
+  $token_chars       =  "(?:(?:[!'*\\-.0-9A-Z_a-z~]+|"                   .
+                              "%(?:2[13-7ABDEabde]|3[0-9]|4[1-9A-Fa-f]|" .
+                                  "5[AEFaef]|6[0-9A-Fa-f]|7[0-9ACEace]))*)";
+  $future_extension  =  "(?:;$token_chars"                       .
+                        "(?:=(?:(?:$token_chars(?:[?]$token_chars)?)|" .
+                        "$quoted_string))?)";
+  $provider_hostname =   $domain;
+  $provider_tag      =  "(?:tsp)";
+  $service_provider  =  "(?:;$provider_tag=$provider_hostname)";
+  $private_prefix    =  "(?:(?:[!'E-OQ-VX-Z_e-oq-vx-z~]|"                   .
+                           "(?:%(?:2[124-7CFcf]|3[AC-Fac-f]|4[05-9A-Fa-f]|" .
+                                  "5[1-689A-Fa-f]|6[05-9A-Fa-f]|"           .
+                                  "7[1-689A-Ea-e])))"                       .
+                           "(?:[!'()*\\-.0-9A-Z_a-z~]+|"                    .
+                           "(?:%(?:2[1-9A-Fa-f]|3[AC-Fac-f]|"               .
+                              "[4-6][0-9A-Fa-f]|7[0-9A-Ea-e])))*)";
+  $local_network_prefix
+                     =  "(?:[0-9\\-.()*#ABCDwp]+)";
+  $global_network_prefix
+                     =  "(?:[+][0-9\\-.()]+)";
+  $network_prefix    =  "(?:$global_network_prefix|$local_network_prefix)";
+  $phone_context_ident
+                     =  "(?:$network_prefix|$private_prefix)";
+  $phone_context_tag =  "(?:phone-context)";
+  $area_specifier    =  "(?:;$phone_context_tag=$phone_context_ident)";
+  $post_dial         =  "(?:;postd=[0-9\\-.()*#ABCDwp]+)";
+  $isdn_subaddress   =  "(?:;isub=[0-9\\-.()]+)";
+  $t33_subaddress    =  "(?:;tsub=[0-9\\-.()]+)";
+  
+  $local_phone_number=  "(?:[0-9\\-.()*#ABCDwp]+$isdn_subaddress?"      .
+                           "$post_dial?$area_specifier"                 .
+                           "(?:$area_specifier|$service_provider|"      .
+                              "$future_extension)*)";
+  $local_phone_number_no_future
+                     =  "(?:[0-9\\-.()*#ABCDwp]+$isdn_subaddress?"      .
+                           "$post_dial?$area_specifier"                 .
+                           "(?:$area_specifier|$service_provider)*)";
+  $fax_local_phone   =  "(?:[0-9\\-.()*#ABCDwp]+$isdn_subaddress?"      .
+                           "$t33_subaddress?$post_dial?$area_specifier" .
+                           "(?:$area_specifier|$service_provider|"      .
+                              "$future_extension)*)";
+  $fax_local_phone_no_future
+                     =  "(?:[0-9\\-.()*#ABCDwp]+$isdn_subaddress?"      .
+                           "$t33_subaddress?$post_dial?$area_specifier" .
+                           "(?:$area_specifier|$service_provider)*)";
+  $base_phone_number =  "(?:[0-9\\-.()]+)";
+  $global_phone_number
+                     =  "(?:[+]$base_phone_number$isdn_subaddress?"     .
+                                                "$post_dial?"           .
+                           "(?:$area_specifier|$service_provider|"      .
+                              "$future_extension)*)";
+  $global_phone_number_no_future
+                     =  "(?:[+]$base_phone_number$isdn_subaddress?"     .
+                                                "$post_dial?"           .
+                           "(?:$area_specifier|$service_provider)*)";
+  $fax_global_phone  =  "(?:[+]$base_phone_number$isdn_subaddress?"     .
+                                "$t33_subaddress?$post_dial?"           .
+                           "(?:$area_specifier|$service_provider|"      .
+                              "$future_extension)*)";
+  $fax_global_phone_no_future
+                     =  "(?:[+]$base_phone_number$isdn_subaddress?"     .
+                                "$t33_subaddress?$post_dial?"           .
+                           "(?:$area_specifier|$service_provider)*)";
+  $telephone_subscriber
+                     =  "(?:$global_phone_number|$local_phone_number)";
+  $telephone_subscriber_no_future
+                     =  "(?:$global_phone_number_no_future|" .
+                           "$local_phone_number_no_future)";
+  $fax_subscriber    =  "(?:$fax_global_phone|$fax_local_phone)";
+  $fax_subscriber_no_future
+                     =  "(?:$fax_global_phone_no_future|"    .
+                           "$fax_local_phone_no_future)";
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::RFC2806 -- Definitions from RFC2806;
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common::URI::RFC2806 qw /:ALL/;
+  
+  =head1 DESCRIPTION
+  
+  This package exports definitions from RFC2806. It's intended
+  usage is for Regexp::Common::URI submodules only. Its interface
+  might change without notice.
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 2616]>
+  
+  Fielding, R., Gettys, J., Mogul, J., Frystyk, H., Masinter, L., 
+  Leach, P. and Berners-Lee, Tim: I<Hypertext Transfer Protocol -- HTTP/1.1>.
+  June 1999.
+  
+  =back
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_RFC2806
+
+$fatpacked{"Regexp/Common/URI/fax.pm"} = <<'REGEXP_COMMON_URI_FAX';
+  package Regexp::Common::URI::fax;
+  
+  use Regexp::Common               qw /pattern clean no_defaults/;
+  use Regexp::Common::URI          qw /register_uri/;
+  use Regexp::Common::URI::RFC2806 qw /$fax_subscriber 
+                                       $fax_subscriber_no_future/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  my $fax_scheme  = 'fax';
+  my $fax_uri     = "(?k:(?k:$fax_scheme):(?k:$fax_subscriber))";
+  my $fax_uri_nf  = "(?k:(?k:$fax_scheme):(?k:$fax_subscriber_no_future))";
+  
+  register_uri $fax_scheme => $fax_uri;
+  
+  pattern name    => [qw (URI fax)],
+          create  => $fax_uri
+          ;
+  
+  pattern name    => [qw (URI fax nofuture)],
+          create  => $fax_uri_nf
+          ;
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::fax -- Returns a pattern for fax URIs.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /URI/;
+  
+      while (<>) {
+          /$RE{URI}{fax}/       and  print "Contains a fax URI.\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  =head2 $RE{URI}{fax}
+  
+  Returns a pattern that matches I<fax> URIs, as defined by RFC 2806.
+  Under C<{-keep}>, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  The complete URI.
+  
+  =item $2
+  
+  The scheme.
+  
+  =item $3
+  
+  The phone number, including any possible add-ons like ISDN subaddress,
+  a post dial part, area specifier, service provider, etc.
+  
+  =back
+  
+  =head2 C<$RE{URI}{fax}{nofuture}>
+  
+  As above (including what's returned by C<{-keep}>), with the exception
+  that I<future extensions> are not allowed. Without allowing 
+  those I<future extensions>, it becomes much easier to check a URI if
+  the correct syntax for post dial, service provider, phone context,
+  etc has been used - otherwise the regex could always classify them
+  as a I<future extension>.
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 1035]>
+  
+  Mockapetris, P.: I<DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION>.
+  November 1987.
+  
+  =item B<[RFC 2396]>
+  
+  Berners-Lee, Tim, Fielding, R., and Masinter, L.: I<Uniform Resource
+  Identifiers (URI): Generic Syntax>. August 1998.
+  
+  =item B<[RFC 2806]>
+  
+  Vaha-Sipila, A.: I<URLs for Telephone Calls>. April 2000.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common::URI> for other supported URIs.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_FAX
+
+$fatpacked{"Regexp/Common/URI/file.pm"} = <<'REGEXP_COMMON_URI_FILE';
+  package Regexp::Common::URI::file;
+  
+  use Regexp::Common               qw /pattern clean no_defaults/;
+  use Regexp::Common::URI          qw /register_uri/;
+  use Regexp::Common::URI::RFC1738 qw /$host $fpath/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  my $scheme = 'file';
+  my $uri    = "(?k:(?k:$scheme)://(?k:(?k:(?:$host|localhost)?)" .
+               "(?k:/(?k:$fpath))))";
+  
+  register_uri $scheme => $uri;
+  
+  pattern name    => [qw (URI file)],
+          create  => $uri,
+          ;
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::file -- Returns a pattern for file URIs.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /URI/;
+  
+      while (<>) {
+          /$RE{URI}{file}/       and  print "Contains a file URI.\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  =head2 $RE{URI}{file}
+  
+  Returns a pattern that matches I<file> URIs, as defined by RFC 1738.
+  File URIs have the form:
+  
+      "file:" "//" [ host | "localhost" ] "/" fpath
+  
+  Under C<{-keep}>, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  The complete URI.
+  
+  =item $2
+  
+  The scheme.
+  
+  =item $3
+  
+  The part of the URI following "file://".
+  
+  =item $4
+  
+  The hostname.
+  
+  =item $5
+  
+  The path name, including the leading slash.
+  
+  =item $6
+  
+  The path name, without the leading slash.
+  
+  =back
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 1738]>
+  
+  Berners-Lee, Tim, Masinter, L., McCahill, M.: I<Uniform Resource
+  Locators (URL)>. December 1994.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common::URI> for other supported URIs.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_FILE
+
+$fatpacked{"Regexp/Common/URI/ftp.pm"} = <<'REGEXP_COMMON_URI_FTP';
+  package Regexp::Common::URI::ftp;
+  
+  use Regexp::Common               qw /pattern clean no_defaults/;
+  use Regexp::Common::URI          qw /register_uri/;
+  use Regexp::Common::URI::RFC2396 qw /$host $port $ftp_segments $userinfo
+                                       $userinfo_no_colon/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  my $ftp_uri = "(?k:(?k:ftp)://(?:(?k:$userinfo)(?k:)\@)?(?k:$host)" .
+                "(?::(?k:$port))?(?k:/(?k:(?k:$ftp_segments)"         .
+                "(?:;type=(?k:[AIai]))?))?)";
+  
+  my $ftp_uri_password =
+                "(?k:(?k:ftp)://(?:(?k:$userinfo_no_colon)"           .
+                "(?::(?k:$userinfo_no_colon))?\@)?(?k:$host)"         .
+                "(?::(?k:$port))?(?k:/(?k:(?k:$ftp_segments)"         .
+                "(?:;type=(?k:[AIai]))?))?)";
+  
+  register_uri FTP => $ftp_uri;
+  
+  pattern name    => [qw (URI FTP), "-type=[AIai]", "-password="],
+          create  => sub {
+              my $uri    =  exists $_ [1] -> {-password} &&
+                          !defined $_ [1] -> {-password} ? $ftp_uri_password
+                                                         : $ftp_uri;
+              my $type   =  $_ [1] -> {-type};
+              $uri       =~ s/\[AIai\]/$type/;
+              $uri;
+          }
+          ;
+  
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::ftp -- Returns a pattern for FTP URIs.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /URI/;
+  
+      while (<>) {
+          /$RE{URI}{FTP}/       and  print "Contains an FTP URI.\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  =head2 $RE{URI}{FTP}{-type}{-password};
+  
+  Returns a regex for FTP URIs. Note: FTP URIs are not formally defined.
+  RFC 1738 defines FTP URLs, but parts of that RFC have been obsoleted
+  by RFC 2396. However, the differences between RFC 1738 and RFC 2396 
+  are such that they aren't applicable straightforwardly to FTP URIs.
+  
+  There are two main problems:
+  
+  =over 4
+  
+  =item Passwords.
+  
+  RFC 1738 allowed an optional username and an optional password (separated
+  by a colon) in the FTP URL. Hence, colons were not allowed in either the
+  username or the password. RFC 2396 strongly recommends passwords should
+  not be used in URIs. It does allow for I<userinfo> instead. This userinfo
+  part may contain colons, and hence contain more than one colon. The regexp
+  returned follows the RFC 2396 specification, unless the I<{-password}>
+  option is given; then the regex allows for an optional username and
+  password, separated by a colon.
+  
+  =item The ;type specifier.
+  
+  RFC 1738 does not allow semi-colons in FTP path names, because a semi-colon
+  is a reserved character for FTP URIs. The semi-colon is used to separate
+  the path from the option I<type> specifier. However, in RFC 2396, paths
+  consist of slash separated segments, and each segment is a semi-colon 
+  separated group of parameters. Straigthforward application of RFC 2396
+  would mean that a trailing I<type> specifier couldn't be distinguished
+  from the last segment of the path having a two parameters, the last one
+  starting with I<type=>. Therefore we have opted to disallow a semi-colon
+  in the path part of an FTP URI.
+  
+  Furthermore, RFC 1738 allows three values for the type specifier, I<A>,
+  I<I> and I<D> (either upper case or lower case). However, the internet
+  draft about FTP URIs B<[DRAFT-FTP-URL]> (which expired in May 1997) notes
+  the lack of consistent implementation of the I<D> parameter and drops I<D>
+  from the set of possible values. We follow this practise; however, RFC 1738
+  behaviour can be archieved by using the I<-type => "[ADIadi]"> parameter.
+  
+  =back
+  
+  FTP URIs have the following syntax:
+  
+      "ftp:" "//" [ userinfo "@" ] host [ ":" port ]
+                  [ "/" path [ ";type=" value ]]
+  
+  When using I<{-password}>, we have the syntax:
+  
+      "ftp:" "//" [ user [ ":" password ] "@" ] host [ ":" port ]
+                  [ "/" path [ ";type=" value ]]
+  
+  Under C<{-keep}>, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  The complete URI.
+  
+  =item $2
+  
+  The scheme.
+  
+  =item $3
+  
+  The userinfo, or if I<{-password}> is used, the username.
+  
+  =item $4
+  
+  If I<{-password}> is used, the password, else C<undef>.
+  
+  =item $5
+  
+  The hostname or IP address.
+  
+  =item $6
+  
+  The port number.
+  
+  =item $7
+  
+  The full path and type specification, including the leading slash.
+  
+  =item $8
+  
+  The full path and type specification, without the leading slash.
+  
+  =item $9
+  
+  The full path, without the type specification nor the leading slash.
+  
+  =item $10
+  
+  The value of the type specification.
+  
+  =back
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[DRAFT-URL-FTP]>
+  
+  Casey, James: I<A FTP URL Format>. November 1996.
+  
+  =item B<[RFC 1738]>
+  
+  Berners-Lee, Tim, Masinter, L., McCahill, M.: I<Uniform Resource
+  Locators (URL)>. December 1994.
+  
+  =item B<[RFC 2396]>
+  
+  Berners-Lee, Tim, Fielding, R., and Masinter, L.: I<Uniform Resource
+  Identifiers (URI): Generic Syntax>. August 1998.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common::URI> for other supported URIs.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_FTP
+
+$fatpacked{"Regexp/Common/URI/gopher.pm"} = <<'REGEXP_COMMON_URI_GOPHER';
+  package Regexp::Common::URI::gopher;
+  
+  use Regexp::Common               qw /pattern clean no_defaults/;
+  use Regexp::Common::URI          qw /register_uri/;
+  use Regexp::Common::URI::RFC1738 qw /$host $port $uchars/;
+  use Regexp::Common::URI::RFC1808 qw /$pchars $pchar_range/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  my $pchars_notab      = "(?:(?:[$pchar_range]+|" . 
+                          "%(?:[1-9a-fA-F][0-9a-fA-F]|0[0-8a-fA-F]))*)";
+  
+  my $gopherplus_string = $pchars;
+  my $search            = $pchars;
+  my $search_notab      = $pchars_notab;
+  my $selector          = $pchars;
+  my $selector_notab    = $pchars_notab;
+  my $gopher_type       = "(?:[0-9+IgT])";
+  
+  my $scheme     = "gopher";
+  my $uri        = "(?k:(?k:$scheme)://(?k:$host)(?::(?k:$port))?" .
+                   "/(?k:(?k:$gopher_type)(?k:$selector)))";
+  my $uri_notab  = "(?k:(?k:$scheme)://(?k:$host)(?::(?k:$port))?"              .
+                   "/(?k:(?k:$gopher_type)(?k:$selector_notab)"                 .
+                   "(?:%09(?k:$search_notab)(?:%09(?k:$gopherplus_string))?)?))";
+  
+  register_uri $scheme => $uri;
+  
+  pattern name    => [qw (URI gopher -notab=)],
+          create  => sub { exists $_ [1] {-notab} &&
+                         !defined $_ [1] {-notab} ? $uri_notab : $uri},
+          ;
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::gopher -- Returns a pattern for gopher URIs.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /URI/;
+  
+      while (<>) {
+          /$RE{URI}{gopher}/       and  print "Contains a gopher URI.\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  =head2 $RE{URI}{gopher}{-notab}
+  
+  Gopher URIs are poorly defined. Originally, RFC 1738 defined gopher URIs,
+  but they were later redefined in an internet draft. One that was expired
+  in June 1997.
+  
+  The internet draft for gopher URIs defines them as follows:
+  
+      "gopher:" "//" host [ ":" port ] "/" gopher-type selector
+                          [ "%09" search [ "%09" gopherplus_string ]]
+  
+  Unfortunally, a I<selector> is defined in such a way that characters
+  may be escaped using the URI escape mechanism. This includes tabs,
+  which escaped are C<%09>. Hence, the syntax cannot distinguish between
+  a URI that has both a I<selector> and a I<search> part, and an URI
+  where the I<selector> includes an escaped tab. (The text of the draft
+  forbids tabs to be present in the I<selector> though).
+  
+  C<$RE{URI}{gopher}> follows the defined syntax. To disallow escaped
+  tabs in the I<selector> and I<search> parts, use C<$RE{URI}{gopher}{-notab}>.
+  
+  There are other differences between the text and the given syntax.
+  According to the text, selector strings cannot have tabs, linefeeds
+  or carriage returns in them. The text also allows the entire I<gopher-path>,
+  (the part after the slash following the hostport) to be empty; if this
+  is empty the slash may be omitted as well. However, this isn't reflected
+  in the syntax.
+  
+  Under C<{-keep}>, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire URI.
+  
+  =item $2
+  
+  The scheme.
+  
+  =item $3
+  
+  The host (name or address).
+  
+  =item $4
+  
+  The port (if any).
+  
+  =item $5
+  
+  The "gopher-path", the part after the / following the host and port.
+  
+  =item $6
+  
+  The gopher-type.
+  
+  =item $7
+  
+  The selector. (When no C<{-notab}> is used, this includes the search
+  and gopherplus_string, including the separating escaped tabs).
+  
+  =item $8
+  
+  The search, if given. (Only when C<{-notab}> is given).
+  
+  =item $9
+  
+  The gopherplus_string, if given. (Only when C<{-notab}> is given).
+  
+  =back
+  
+  head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 1738]>
+  
+  Berners-Lee, Tim, Masinter, L., McCahill, M.: I<Uniform Resource
+  Locators (URL)>. December 1994.
+  
+  =item B<[RFC 1808]>
+  
+  Fielding, R.: I<Relative Uniform Resource Locators (URL)>. June 1995.
+  
+  =item B<[GOPHER URL]>
+  
+  Krishnan, Murali R., Casey, James: "A Gopher URL Format". Expired
+  Internet draft I<draft-murali-url-gopher>. December 1996.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common::URI> for other supported URIs.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_GOPHER
+
+$fatpacked{"Regexp/Common/URI/http.pm"} = <<'REGEXP_COMMON_URI_HTTP';
+  package Regexp::Common::URI::http;
+  
+  use Regexp::Common               qw /pattern clean no_defaults/;
+  use Regexp::Common::URI          qw /register_uri/;
+  use Regexp::Common::URI::RFC2396 qw /$host $port $path_segments $query/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  my $http_uri = "(?k:(?k:http)://(?k:$host)(?::(?k:$port))?"           .
+                 "(?k:/(?k:(?k:$path_segments)(?:[?](?k:$query))?))?)";
+  
+  register_uri HTTP => $http_uri;
+  
+  pattern name    => [qw (URI HTTP), "-scheme=http"],
+          create  => sub {
+              my $scheme =  $_ [1] -> {-scheme};
+              my $uri    =  $http_uri;
+                 $uri    =~ s/http/$scheme/;
+              $uri;
+          }
+          ;
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::http -- Returns a pattern for HTTP URIs.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /URI/;
+  
+      while (<>) {
+          /$RE{URI}{HTTP}/       and  print "Contains an HTTP URI.\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  =head2 $RE{URI}{HTTP}{-scheme}
+  
+  Provides a regex for an HTTP URI as defined by RFC 2396 (generic syntax)
+  and RFC 2616 (HTTP).
+  
+  If C<< -scheme => I<P> >> is specified the pattern I<P> is used as the scheme.
+  By default I<P> is C<qr/http/>. C<https> and C<https?> are reasonable
+  alternatives.
+  
+  The syntax for an HTTP URI is:
+  
+      "http:" "//" host [ ":" port ] [ "/" path [ "?" query ]]
+  
+  Under C<{-keep}>, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire URI.
+  
+  =item $2
+  
+  The scheme.
+  
+  =item $3
+  
+  The host (name or address).
+  
+  =item $4
+  
+  The port (if any).
+  
+  =item $5
+  
+  The absolute path, including the query and leading slash.
+  
+  =item $6
+  
+  The absolute path, including the query, without the leading slash.
+  
+  =item $7
+  
+  The absolute path, without the query or leading slash.
+  
+  =item $8
+  
+  The query, without the question mark.
+  
+  =back
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 2396]>
+  
+  Berners-Lee, Tim, Fielding, R., and Masinter, L.: I<Uniform Resource
+  Identifiers (URI): Generic Syntax>. August 1998.
+  
+  =item B<[RFC 2616]>
+  
+  Fielding, R., Gettys, J., Mogul, J., Frystyk, H., Masinter, L., 
+  Leach, P. and Berners-Lee, Tim: I<Hypertext Transfer Protocol -- HTTP/1.1>.
+  June 1999.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common::URI> for other supported URIs.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_HTTP
+
+$fatpacked{"Regexp/Common/URI/news.pm"} = <<'REGEXP_COMMON_URI_NEWS';
+  package Regexp::Common::URI::news;
+  
+  use Regexp::Common               qw /pattern clean no_defaults/;
+  use Regexp::Common::URI          qw /register_uri/;
+  use Regexp::Common::URI::RFC1738 qw /$grouppart $group $article
+                                       $host $port $digits/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  my $news_scheme = 'news';
+  my $news_uri    = "(?k:(?k:$news_scheme):(?k:$grouppart))";
+  
+  my $nntp_scheme = 'nntp';
+  my $nntp_uri    = "(?k:(?k:$nntp_scheme)://(?k:(?k:(?k:$host)(?::(?k:$port))?)" 
+                  . "/(?k:$group)(?:/(?k:$digits))?))";
+  
+  register_uri $news_scheme => $news_uri;
+  register_uri $nntp_scheme => $nntp_uri;
+  
+  pattern name    => [qw (URI news)],
+          create  => $news_uri,
+          ;
+  
+  pattern name    => [qw (URI NNTP)],
+          create  => $nntp_uri,
+          ;
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::news -- Returns a pattern for file URIs.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /URI/;
+  
+      while (<>) {
+          /$RE{URI}{news}/       and  print "Contains a news URI.\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  =head2 $RE{URI}{news}
+  
+  Returns a pattern that matches I<news> URIs, as defined by RFC 1738.
+  News URIs have the form:
+  
+      "news:" ( "*" | group | article "@" host )
+  
+  Under C<{-keep}>, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  The complete URI.
+  
+  =item $2
+  
+  The scheme.
+  
+  =item $3
+  
+  The part of the URI following "news://".
+  
+  =back
+  
+  =head2 $RE{URI}{NNTP}
+  
+  Returns a pattern that matches I<NNTP> URIs, as defined by RFC 1738.
+  NNTP URIs have the form:
+  
+      "nntp://" host [ ":" port ] "/" group [ "/" digits ]
+  
+  Under C<{-keep}>, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  The complete URI.
+  
+  =item $2
+  
+  The scheme.
+  
+  =item $3
+  
+  The part of the URI following "nntp://".
+  
+  =item $4
+  
+  The host and port, separated by a colon. If no port was given, just
+  the host.
+  
+  =item $5
+  
+  The host.
+  
+  =item $6
+  
+  The port, if given.
+  
+  =item $7
+  
+  The group.
+  
+  =item $8
+  
+  The digits, if given.
+  
+  =back
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 1738]>
+  
+  Berners-Lee, Tim, Masinter, L., McCahill, M.: I<Uniform Resource
+  Locators (URL)>. December 1994.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common::URI> for other supported URIs.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_NEWS
+
+$fatpacked{"Regexp/Common/URI/pop.pm"} = <<'REGEXP_COMMON_URI_POP';
+  package Regexp::Common::URI::pop;
+  
+  use Regexp::Common               qw /pattern clean no_defaults/;
+  use Regexp::Common::URI          qw /register_uri/;
+  use Regexp::Common::URI::RFC1738 qw /$host $port/;
+  use Regexp::Common::URI::RFC2384 qw /$enc_user $enc_auth_type/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  my $scheme = "pop";
+  my $uri    = "(?k:(?k:$scheme)://(?:(?k:$enc_user)"     .  
+               "(?:;AUTH=(?k:[*]|$enc_auth_type))?\@)?"   .
+               "(?k:$host)(?::(?k:$port))?)";
+  
+  register_uri $scheme => $uri;
+  
+  pattern name    => [qw (URI POP)],
+          create  => $uri,
+          ;
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::pop -- Returns a pattern for POP URIs.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /URI/;
+  
+      while (<>) {
+          /$RE{URI}{POP}/       and  print "Contains a POP URI.\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  =head2 $RE{URI}{POP}
+  
+  Returns a pattern that matches I<POP> URIs, as defined by RFC 2384.
+  POP URIs have the form:
+  
+      "pop:" "//" [ user [ ";AUTH" ( "*" | auth_type ) ] "@" ]
+                    host [ ":" port ]
+  
+  Under C<{-keep}>, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  The complete URI.
+  
+  =item $2
+  
+  The I<scheme>.
+  
+  =item $3
+  
+  The I<user>, if given.
+  
+  =item $4
+  
+  The I<authentication type>, if given (could be a I<*>).
+  
+  =item $5
+  
+  The I<host>.
+  
+  =item $6
+  
+  The I<port>, if given.
+  
+  =back
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 2384]>
+  
+  Gellens, R.: I<POP URL Scheme>. August 1998.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common::URI> for other supported URIs.
+  
+  =head1 AUTHOR
+  
+  Abigail. (I<regexp-common@abigail.be>).
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_POP
+
+$fatpacked{"Regexp/Common/URI/prospero.pm"} = <<'REGEXP_COMMON_URI_PROSPERO';
+  package Regexp::Common::URI::prospero;
+  
+  use Regexp::Common               qw /pattern clean no_defaults/;
+  use Regexp::Common::URI          qw /register_uri/;
+  use Regexp::Common::URI::RFC1738 qw /$host $port $ppath $fieldname $fieldvalue
+                                       $fieldspec/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  my $scheme = 'prospero';
+  my $uri    = "(?k:(?k:$scheme)://(?k:$host)(?::(?k:$port))?" .
+               "/(?k:$ppath)(?k:$fieldspec*))";
+  
+  register_uri $scheme => $uri;
+  
+  pattern name    => [qw (URI prospero)],
+          create  => $uri,
+          ;
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::prospero -- Returns a pattern for prospero URIs.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /URI/;
+  
+      while (<>) {
+          /$RE{URI}{prospero}/ and print "Contains a prospero URI.\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  =head2 $RE{URI}{prospero}
+  
+  Returns a pattern that matches I<prospero> URIs, as defined by RFC 1738.
+  prospero URIs have the form:
+  
+      "prospero:" "//" host [ ":" port ] "/" path [ fieldspec ] *
+  
+  Under C<{-keep}>, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  The complete URI.
+  
+  =item $2
+  
+  The I<scheme>.
+  
+  =item $3
+  
+  The I<hostname>.
+  
+  =item $4
+  
+  The I<port>, if given.
+  
+  =item $5
+  
+  The propero path.
+  
+  =item $6
+  
+  The field specifications, if given. There can be more field specifications;
+  they will all be returned in C<$6>.
+  
+  =back
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 1738]>
+  
+  Berners-Lee, Tim, Masinter, L., McCahill, M.: I<Uniform Resource
+  Locators (URL)>. December 1994.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common::URI> for other supported URIs.
+  
+  =head1 AUTHOR
+  
+  Abigail. (I<regexp-common@abigail.be>).
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_PROSPERO
+
+$fatpacked{"Regexp/Common/URI/tel.pm"} = <<'REGEXP_COMMON_URI_TEL';
+  package Regexp::Common::URI::tel;
+  
+  use Regexp::Common               qw /pattern clean no_defaults/;
+  use Regexp::Common::URI          qw /register_uri/;
+  use Regexp::Common::URI::RFC2806 qw /$telephone_subscriber 
+                                       $telephone_subscriber_no_future/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  my $tel_scheme  = 'tel';
+  my $tel_uri     = "(?k:(?k:$tel_scheme):(?k:$telephone_subscriber))";
+  my $tel_uri_nf  = "(?k:(?k:$tel_scheme):(?k:$telephone_subscriber_no_future))";
+  
+  register_uri $tel_scheme => $tel_uri;
+  
+  pattern name    => [qw (URI tel)],
+          create  => $tel_uri
+          ;
+  
+  pattern name    => [qw (URI tel nofuture)],
+          create  => $tel_uri_nf
+          ;
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::tel -- Returns a pattern for telephone URIs.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /URI/;
+  
+      while (<>) {
+          /$RE{URI}{tel}/       and  print "Contains a telephone URI.\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  =head2 $RE{URI}{tel}
+  
+  Returns a pattern that matches I<tel> URIs, as defined by RFC 2806.
+  Under C<{-keep}>, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  The complete URI.
+  
+  =item $2
+  
+  The scheme.
+  
+  =item $3
+  
+  The phone number, including any possible add-ons like ISDN subaddress,
+  a post dial part, area specifier, service provider, etc.
+  
+  =back
+  
+  =head2 C<$RE{URI}{tel}{nofuture}>
+  
+  As above (including what's returned by C<{-keep}>), with the exception
+  that I<future extensions> are not allowed. Without allowing 
+  those I<future extensions>, it becomes much easier to check a URI if
+  the correct syntax for post dial, service provider, phone context,
+  etc has been used - otherwise the regex could always classify them
+  as a I<future extension>.
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 1035]>
+  
+  Mockapetris, P.: I<DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION>.
+  November 1987.
+  
+  =item B<[RFC 2396]>
+  
+  Berners-Lee, Tim, Fielding, R., and Masinter, L.: I<Uniform Resource
+  Identifiers (URI): Generic Syntax>. August 1998.
+  
+  =item B<[RFC 2806]>
+  
+  Vaha-Sipila, A.: I<URLs for Telephone Calls>. April 2000.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common::URI> for other supported URIs.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_TEL
+
+$fatpacked{"Regexp/Common/URI/telnet.pm"} = <<'REGEXP_COMMON_URI_TELNET';
+  package Regexp::Common::URI::telnet;
+  
+  use Regexp::Common               qw /pattern clean no_defaults/;
+  use Regexp::Common::URI          qw /register_uri/;
+  use Regexp::Common::URI::RFC1738 qw /$user $password $host $port/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  my $telnet_uri = "(?k:(?k:telnet)://(?:(?k:(?k:$user)(?::(?k:$password))?)\@)?" 
+                 . "(?k:(?k:$host)(?::(?k:$port))?)(?k:/)?)";
+  
+  register_uri telnet => $telnet_uri;
+  
+  pattern name    => [qw (URI telnet)],
+          create  => $telnet_uri,
+          ;
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::telnet -- Returns a pattern for telnet URIs.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /URI/;
+  
+      while (<>) {
+          /$RE{URI}{telnet}/       and  print "Contains a telnet URI.\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  =head2 $RE{URI}{telnet}
+  
+  Returns a pattern that matches I<telnet> URIs, as defined by RFC 1738.
+  Telnet URIs have the form:
+  
+      "telnet:" "//" [ user [ ":" password ] "@" ] host [ ":" port ] [ "/" ]
+  
+  Under C<{-keep}>, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  The complete URI.
+  
+  =item $2
+  
+  The scheme.
+  
+  =item $3
+  
+  The username:password combo, or just the username if there is no password.
+  
+  =item $4
+  
+  The username, if given.
+  
+  =item $5
+  
+  The password, if given.
+  
+  =item $6
+  
+  The host:port combo, or just the host if there's no port.
+  
+  =item $7
+  
+  The host.
+  
+  =item $8
+  
+  The port, if given.
+  
+  =item $9
+  
+  The trailing slash, if any.
+  
+  =back
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 1738]>
+  
+  Berners-Lee, Tim, Masinter, L., McCahill, M.: I<Uniform Resource
+  Locators (URL)>. December 1994.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common::URI> for other supported URIs.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_TELNET
+
+$fatpacked{"Regexp/Common/URI/tv.pm"} = <<'REGEXP_COMMON_URI_TV';
+  # TV URLs. 
+  # Internet draft: draft-zigmond-tv-url-03.txt
+  
+  package Regexp::Common::URI::tv;
+  
+  use Regexp::Common               qw /pattern clean no_defaults/;
+  use Regexp::Common::URI          qw /register_uri/;
+  use Regexp::Common::URI::RFC2396 qw /$hostname/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  my $tv_scheme = 'tv';
+  my $tv_url    = "(?k:(?k:$tv_scheme):(?k:$hostname)?)";
+  
+  register_uri $tv_scheme => $tv_url;
+  
+  pattern name    => [qw (URI tv)],
+          create  => $tv_url,
+          ;
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::tv -- Returns a pattern for tv URIs.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /URI/;
+  
+      while (<>) {
+          /$RE{URI}{tv}/       and  print "Contains a tv URI.\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  =head2 C<$RE{URI}{tv}>
+  
+  Returns a pattern that recognizes TV uris as per an Internet draft
+  [DRAFT-URI-TV].
+  
+  Under C<{-keep}>, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire URI.
+  
+  =item $2
+  
+  The scheme.
+  
+  =item $3
+  
+  The host.
+  
+  =back
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[DRAFT-URI-TV]>
+  
+  Zigmond, D. and Vickers, M: I<Uniform Resource Identifiers for
+  Television Broadcasts>. December 2000.
+  
+  =item B<[RFC 2396]>
+  
+  Berners-Lee, Tim, Fielding, R., and Masinter, L.: I<Uniform Resource
+  Identifiers (URI): Generic Syntax>. August 1998.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common::URI> for other supported URIs.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_TV
+
+$fatpacked{"Regexp/Common/URI/wais.pm"} = <<'REGEXP_COMMON_URI_WAIS';
+  package Regexp::Common::URI::wais;
+  
+  use Regexp::Common               qw /pattern clean no_defaults/;
+  use Regexp::Common::URI          qw /register_uri/;
+  use Regexp::Common::URI::RFC1738 qw /$host $port
+                                       $search $database $wtype $wpath/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  my $scheme = 'wais';
+  my $uri    = "(?k:(?k:$scheme)://(?k:$host)(?::(?k:$port))?/(?k:(?k:$database)" 
+             . "(?k:[?](?k:$search)|/(?k:$wtype)/(?k:$wpath))?))";
+  
+  register_uri $scheme => $uri;
+  
+  pattern name    => [qw (URI WAIS)],
+          create  => $uri,
+          ;
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::URI::wais -- Returns a pattern for WAIS URIs.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /URI/;
+  
+      while (<>) {
+          /$RE{URI}{WAIS}/       and  print "Contains a WAIS URI.\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  =head2 $RE{URI}{WAIS}
+  
+  Returns a pattern that matches I<WAIS> URIs, as defined by RFC 1738.
+  WAIS URIs have the form:
+  
+      "wais:" "//" host [ ":" port ] "/" database
+                        [ ( "?" search ) | ( "/" wtype "/" wpath ) ]
+  
+  Under C<{-keep}>, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  The complete URI.
+  
+  =item $2
+  
+  The I<scheme>.
+  
+  =item $3
+  
+  The I<hostname>.
+  
+  =item $4
+  
+  The I<port>, if given.
+  
+  =item $5
+  
+  The I<database>, followed by I<search> or I<wtype/wpath>, if given.
+  
+  =item $6
+  
+  The I<database>.
+  
+  =item $7
+  
+  The part following the I<database> if given, including the question mark 
+  or slash.
+  
+  =item $8
+  
+  The I<search> part, if given.
+  
+  =item $9
+  
+  The I<wtype>, if given.
+  
+  =item $10
+  
+  The I<wpath>, if given.
+  
+  =back
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[RFC 1738]>
+  
+  Berners-Lee, Tim, Masinter, L., McCahill, M.: I<Uniform Resource
+  Locators (URL)>. December 1994.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common::URI> for other supported URIs.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_URI_WAIS
+
+$fatpacked{"Regexp/Common/_support.pm"} = <<'REGEXP_COMMON__SUPPORT';
+  package Regexp::Common::_support;
+  
+  BEGIN {
+      # This makes sure 'use warnings' doesn't bomb out on 5.005_*;
+      # warnings won't be enabled on those old versions though.
+      if ($] < 5.006 && !exists $INC {"warnings.pm"}) {
+          $INC {"warnings.pm"} = 1;
+          no strict 'refs';
+          *{"warnings::unimport"} = sub {0};
+      }
+  }
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  #
+  # Returns true/false, depending whether the given the argument
+  # satisfies the LUHN checksum.
+  # See http://www.webopedia.com/TERM/L/Luhn_formula.html.
+  #
+  # Note that this function is intended to be called from regular
+  # expression, so it should NOT use a regular expression in any way.
+  #
+  sub luhn {
+      my $arg  = shift;
+      my $even = 0;
+      my $sum  = 0;
+      while (length $arg) {
+          my $num = chop $arg;
+          return if $num lt '0' || $num gt '9';
+          if ($even && (($num *= 2) > 9)) {$num = 1 + ($num % 10)}
+          $even = 1 - $even;
+          $sum += $num;
+      }
+      !($sum % 10)
+  }
+  
+  sub import {
+      my $pack   = shift;
+      my $caller = caller;
+      no strict 'refs';
+      *{$caller . "::" . $_} = \&{$pack . "::" . $_} for @_;
+  }
+  
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::support -- Support functions for Regexp::Common.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common::_support qw /luhn/;
+  
+      luhn ($number)    # Returns true/false.
+  
+  
+  =head1 DESCRIPTION
+  
+  This module contains some subroutines to be used by other C<Regexp::Common>
+  modules. It's not intended to be used directly. Subroutines from the 
+  module may disappear without any notice, or their meaning or interface
+  may change without notice.
+  
+  =over 4
+  
+  =item luhn
+  
+  This subroutine returns true if its argument passes the luhn checksum test.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<http://www.webopedia.com/TERM/L/Luhn_formula.html>.
+  
+  =head1 AUTHOR
+  
+  Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON__SUPPORT
+
+$fatpacked{"Regexp/Common/balanced.pm"} = <<'REGEXP_COMMON_BALANCED';
+  package Regexp::Common::balanced; {
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  my %closer = ( '{'=>'}', '('=>')', '['=>']', '<'=>'>' );
+  my $count = -1;
+  my %cache;
+  
+  sub nested {
+      my ($start, $finish) = @_;
+  
+      return $Regexp::Common::balanced [$cache {$start} {$finish}]
+              if exists $cache {$start} {$finish};
+  
+      $count ++;
+      my $r = '(??{$Regexp::Common::balanced ['. $count . ']})';
+  
+      my @starts   = map {s/\\(.)/$1/g; $_} grep {length}
+                          $start  =~ /([^|\\]+|\\.)+/gs;
+      my @finishes = map {s/\\(.)/$1/g; $_} grep {length}
+                          $finish =~ /([^|\\]+|\\.)+/gs;
+  
+      push @finishes => ($finishes [-1]) x (@starts - @finishes);
+  
+      my @re;
+      local $" = "|";
+      foreach my $begin (@starts) {
+          my $end = shift @finishes;
+  
+          my $qb  = quotemeta $begin;
+          my $qe  = quotemeta $end;
+          my $fb  = quotemeta substr $begin => 0, 1;
+          my $fe  = quotemeta substr $end   => 0, 1;
+  
+          my $tb  = quotemeta substr $begin => 1;
+          my $te  = quotemeta substr $end   => 1;
+  
+          use re 'eval';
+  
+          my $add;
+          if ($fb eq $fe) {
+              push @re =>
+                     qr /(?:$qb(?:(?>[^$fb]+)|$fb(?!$tb)(?!$te)|$r)*$qe)/;
+          }
+          else {
+              my   @clauses =  "(?>[^$fb$fe]+)";
+              push @clauses => "$fb(?!$tb)" if length $tb;
+              push @clauses => "$fe(?!$te)" if length $te;
+              push @clauses =>  $r;
+              push @re      =>  qr /(?:$qb(?:@clauses)*$qe)/;
+          }
+      }
+  
+      $cache {$start} {$finish} = $count;
+      $Regexp::Common::balanced [$count] = qr/@re/;
+  }
+  
+  
+  pattern name    => [qw /balanced -parens=() -begin= -end=/],
+          create  => sub {
+              my $flag = $_[1];
+              unless (defined $flag -> {-begin} && length $flag -> {-begin} &&
+                      defined $flag -> {-end}   && length $flag -> {-end}) {
+                  my @open  = grep {index ($flag->{-parens}, $_) >= 0}
+                               ('[','(','{','<');
+                  my @close = map {$closer {$_}} @open;
+                  $flag -> {-begin} = join "|" => @open;
+                  $flag -> {-end}   = join "|" => @close;
+              }
+              my $pat = nested @$flag {qw /-begin -end/};
+              return exists $flag -> {-keep} ? qr /($pat)/ : $pat;
+          },
+          version => 5.006,
+          ;
+  
+  }
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::balanced -- provide regexes for strings with balanced
+  parenthesized delimiters or arbitrary delimiters.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /balanced/;
+  
+      while (<>) {
+          /$RE{balanced}{-parens=>'()'}/
+                                     and print q{balanced parentheses\n};
+      }
+  
+  
+  =head1 DESCRIPTION
+  
+  Please consult the manual of L<Regexp::Common> for a general description
+  of the works of this interface.
+  
+  Do not use this module directly, but load it via I<Regexp::Common>.
+  
+  =head2 C<$RE{balanced}{-parens}>
+  
+  Returns a pattern that matches a string that starts with the nominated
+  opening parenthesis or bracket, contains characters and properly nested
+  parenthesized subsequences, and ends in the matching parenthesis.
+  
+  More than one type of parenthesis can be specified:
+  
+          $RE{balanced}{-parens=>'(){}'}
+  
+  in which case all specified parenthesis types must be correctly balanced within
+  the string.
+  
+  If we are using C{-keep} (See L<Regexp::Common>):
+  
+  =over 4
+  
+  =item $1
+  
+  captures the entire expression
+  
+  =back
+  
+  =head2 C<< $RE{balanced}{-begin => "begin"}{-end => "end"} >>
+  
+  Returns a pattern that matches a string that is properly balanced
+  using the I<begin> and I<end> strings as start and end delimiters.
+  Multiple sets of begin and end strings can be given by separating
+  them by C<|>s (which can be escaped with a backslash).
+  
+      qr/$RE{balanced}{-begin => "do|if|case"}{-end => "done|fi|esac"}/
+  
+  will match properly balanced strings that either start with I<do> and
+  end with I<done>, start with I<if> and end with I<fi>, or start with
+  I<case> and end with I<esac>.
+  
+  If I<-end> contains less cases than I<-begin>, the last case of I<-end>
+  is repeated. If it contains more cases than I<-begin>, the extra cases
+  are ignored. If either of I<-begin> or I<-end> isn't given, or is empty,
+  I<< -begin => '(' >> and I<< -end => ')' >> are assumed.
+  
+  If we are using C{-keep} (See L<Regexp::Common>):
+  
+  =over 4
+  
+  =item $1
+  
+  captures the entire expression
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common> for a general description of how to use this interface.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  For a start, there are many common regexes missing.
+  Send them in to I<regexp-common@abigail.be>.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_BALANCED
+
+$fatpacked{"Regexp/Common/comment.pm"} = <<'REGEXP_COMMON_COMMENT';
+  package Regexp::Common::comment;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  my @generic = (
+      {languages => [qw /ABC Forth/],
+       to_eol    => ['\\\\']},   # This is for just a *single* backslash.
+  
+      {languages => [qw /Ada Alan Eiffel lua/],
+       to_eol    => ['--']},
+  
+      {languages => [qw /Advisor/],
+       to_eol    => ['#|//']},
+  
+      {languages => [qw /Advsys CQL Lisp LOGO M MUMPS REBOL Scheme
+                         SMITH zonefile/],
+       to_eol    => [';']},
+  
+      {languages => ['Algol 60'],
+       from_to   => [[qw /comment ;/]]},
+  
+      {languages => [qw {ALPACA B C C-- LPC PL/I}],
+       from_to   => [[qw {/* */}]]},
+  
+      {languages => [qw /awk fvwm2 Icon m4 mutt Perl Python QML
+                         R Ruby shell Tcl/],
+       to_eol    => ['#']},
+  
+      {languages => [[BASIC => 'mvEnterprise']],
+       to_eol    => ['[*!]|REM']},
+  
+      {languages => [qw /Befunge-98 Funge-98 Shelta/],
+       id        => [';']},
+  
+      {languages => ['beta-Juliet', 'Crystal Report', 'Portia', 'Ubercode'],
+       to_eol    => ['//']},
+  
+      {languages => ['BML'],
+       from_to   => [['<?_c', '_c?>']],
+      },
+  
+      {languages => [qw /C++/, 'C#', qw /Cg ECMAScript FPL Java JavaScript/],
+       to_eol    => ['//'],
+       from_to   => [[qw {/* */}]]},
+  
+      {languages => [qw /CLU LaTeX slrn TeX/],
+       to_eol    => ['%']},
+  
+      {languages => [qw /False/],
+       from_to   => [[qw !{ }!]]},
+  
+      {languages => [qw /Fortran/],
+       to_eol    => ['!']},
+  
+      {languages => [qw /Haifu/],
+       id        => [',']},
+  
+      {languages => [qw /ILLGOL/],
+       to_eol    => ['NB']},
+  
+      {languages => [qw /INTERCAL/],
+       to_eol    => [q{(?:(?:PLEASE(?:\s+DO)?|DO)\s+)?(?:NOT|N'T)}]},
+  
+      {languages => [qw /J/],
+       to_eol    => ['NB[.]']},
+  
+      {languages => [qw /Nickle/],
+       to_eol    => ['#'],
+       from_to   => [[qw {/* */}]]},
+  
+      {languages => [qw /Oberon/],
+       from_to   => [[qw /(* *)/]]},
+       
+      {languages => [[qw /Pascal Delphi/], [qw /Pascal Free/], [qw /Pascal GPC/]],
+       to_eol    => ['//'],
+       from_to   => [[qw !{ }!], [qw !(* *)!]]},
+  
+      {languages => [[qw /Pascal Workshop/]],
+       id        => [qw /"/],
+       from_to   => [[qw !{ }!], [qw !(* *)!], [qw !/* */!]]},
+  
+      {languages => [qw /PEARL/],
+       to_eol    => ['!'],
+       from_to   => [[qw {/* */}]]},
+  
+      {languages => [qw /PHP/],
+       to_eol    => ['#', '//'],
+       from_to   => [[qw {/* */}]]},
+  
+      {languages => [qw !PL/B!],
+       to_eol    => ['[.;]']},
+  
+      {languages => [qw !PL/SQL!],
+       to_eol    => ['--'],
+       from_to   => [[qw {/* */}]]},
+  
+      {languages => [qw /Q-BAL/],
+       to_eol    => ['`']},
+  
+      {languages => [qw /Smalltalk/],
+       id        => ['"']},
+  
+      {languages => [qw /SQL/],
+       to_eol    => ['-{2,}']},
+  
+      {languages => [qw /troff/],
+       to_eol    => ['\\\"']},
+  
+      {languages => [qw /vi/],
+       to_eol    => ['"']},
+  
+      {languages => [qw /*W/],
+       from_to   => [[qw {|| !!}]]},
+  
+      {languages => [qw /ZZT-OOP/],
+       to_eol    => ["'"]},
+  );
+  
+  my @plain_or_nested = (
+     [Caml         =>  undef,       "(*"  => "*)"],
+     [Dylan        =>  "//",        "/*"  => "*/"],
+     [Haskell      =>  "-{2,}",     "{-"  => "-}"],
+     [Hugo         =>  "!(?!\\\\)", "!\\" => "\\!"],
+     [SLIDE        =>  "#",         "(*"  => "*)"],
+    ['Modula-2'    =>  undef,       "(*"  => "*)"],
+    ['Modula-3'    =>  undef,       "(*"  => "*)"],
+  );
+  
+  #
+  # Helper subs.
+  #
+  
+  sub combine      {
+      local $_ = join "|", @_;
+      if (@_ > 1) {
+          s/\(\?k:/(?:/g;
+          $_ = "(?k:$_)";
+      }
+      $_
+  }
+  
+  sub to_eol  ($)  {"(?k:(?k:$_[0])(?k:[^\\n]*)(?k:\\n))"}
+  sub id      ($)  {"(?k:(?k:$_[0])(?k:[^$_[0]]*)(?k:$_[0]))"}  # One char only!
+  sub from_to      {
+      my ($begin, $end) = @_;
+  
+      my $qb  = quotemeta $begin;
+      my $qe  = quotemeta $end;
+      my $fe  = quotemeta substr $end   => 0, 1;
+      my $te  = quotemeta substr $end   => 1;
+  
+      "(?k:(?k:$qb)(?k:(?:[^$fe]+|$fe(?!$te))*)(?k:$qe))";
+  }
+  
+  
+  my $count = 0;
+  sub nested {
+      my ($begin, $end) = @_;
+  
+      $count ++;
+      my $r = '(??{$Regexp::Common::comment ['. $count . ']})';
+  
+      my $qb  = quotemeta $begin;
+      my $qe  = quotemeta $end;
+      my $fb  = quotemeta substr $begin => 0, 1;
+      my $fe  = quotemeta substr $end   => 0, 1;
+  
+      my $tb  = quotemeta substr $begin => 1;
+      my $te  = quotemeta substr $end   => 1;
+  
+      use re 'eval';
+  
+      my $re;
+      if ($fb eq $fe) {
+          $re = qr /(?:$qb(?:(?>[^$fb]+)|$fb(?!$tb)(?!$te)|$r)*$qe)/;
+      }
+      else {
+          local $"      =  "|";
+          my   @clauses =  "(?>[^$fb$fe]+)";
+          push @clauses => "$fb(?!$tb)" if length $tb;
+          push @clauses => "$fe(?!$te)" if length $te;
+          push @clauses =>  $r;
+          $re           =   qr /(?:$qb(?:@clauses)*$qe)/;
+      }
+  
+      $Regexp::Common::comment [$count] = qr/$re/;
+  }
+  
+  #
+  # Process data.
+  #
+  
+  foreach my $info (@plain_or_nested) {
+      my ($language, $mark, $begin, $end) = @$info;
+      pattern name    => [comment => $language],
+              create  =>
+                  sub {my $re     = nested $begin => $end;
+                       my $prefix = defined $mark ? $mark . "[^\n]*\n|" : "";
+                       exists $_ [1] -> {-keep} ? qr /($prefix$re)/
+                                                : qr  /$prefix$re/
+                  },
+              version => 5.006,
+              ;
+  }
+  
+  
+  foreach my $group (@generic) {
+      my $pattern = combine +(map {to_eol   $_} @{$group -> {to_eol}}),
+                             (map {from_to @$_} @{$group -> {from_to}}),
+                             (map {id       $_} @{$group -> {id}}),
+                    ;
+      foreach my $language  (@{$group -> {languages}}) {
+          pattern name    => [comment => ref $language ? @$language : $language],
+                  create  => $pattern,
+                  ;
+      }
+  }
+                  
+  
+      
+  #
+  # Other languages.
+  #
+  
+  # http://www.pascal-central.com/docs/iso10206.txt
+  pattern name    => [qw /comment Pascal/],
+          create  => '(?k:' . '(?k:[{]|[(][*])'
+                            . '(?k:[^}*]*(?:[*](?![)])[^}*]*)*)'
+                            . '(?k:[}]|[*][)])'
+                            . ')'
+          ;
+  
+  # http://www.templetons.com/brad/alice/language/
+  pattern name    =>  [qw /comment Pascal Alice/],
+          create  =>  '(?k:(?k:[{])(?k:[^}\n]*)(?k:[}]))'
+          ;
+  
+  
+  # http://westein.arb-phys.uni-dortmund.de/~wb/a68s.txt
+  pattern name    => [qw (comment), 'Algol 68'],
+          create  => q {(?k:(?:#[^#]*#)|}                           .
+                     q {(?:\bco\b(?:[^c]+|\Bc|\bc(?!o\b))*\bco\b)|} .
+                     q {(?:\bcomment\b(?:[^c]+|\Bc|\bc(?!omment\b))*\bcomment\b))}
+          ;
+  
+  
+  # See rules 91 and 92 of ISO 8879 (SGML).
+  # Charles F. Goldfarb: "The SGML Handbook".
+  # Oxford: Oxford University Press. 1990. ISBN 0-19-853737-9.
+  # Ch. 10.3, pp 390.
+  pattern name    => [qw (comment HTML)],
+          create  => q {(?k:(?k:<!)(?k:(?:--(?k:[^-]*(?:-[^-]+)*)--\s*)*)(?k:>))},
+          ;
+  
+  
+  pattern name    => [qw /comment SQL MySQL/],
+          create  => q {(?k:(?:#|-- )[^\n]*\n|} .
+                     q {/\*(?:(?>[^*;"']+)|"[^"]*"|'[^']*'|\*(?!/))*(?:;|\*/))},
+          ;
+  
+  # Anything that isn't <>[]+-.,
+  # http://home.wxs.nl/~faase009/Ha_BF.html
+  pattern name    => [qw /comment Brainfuck/],
+          create  => '(?k:[^<>\[\]+\-.,]+)'
+          ;
+  
+  # Squeak is a variant of Smalltalk-80.
+  # http://www.squeak.
+  # http://mucow.com/squeak-qref.html
+  pattern name    => [qw /comment Squeak/],
+          create  => '(?k:(?k:")(?k:[^"]*(?:""[^"]*)*)(?k:"))'
+          ;
+  
+  #
+  # Scores of less than 5 or above 17....
+  # http://www.cliff.biffle.org/esoterica/beatnik.html
+  @Regexp::Common::comment::scores = (1,  3,  3,  2,  1,  4,  2,  4,  1,  8,
+                                      5,  1,  3,  1,  1,  3, 10,  1,  1,  1,
+                                      1,  4,  4,  8,  4, 10);
+  {
+  my ($s, $x);
+  pattern name    =>  [qw /comment Beatnik/],
+          create  =>  sub {
+              use re 'eval';
+              my $re = qr {\b([A-Za-z]+)\b
+                           (?(?{($s, $x) = (0, lc $^N);
+                                $s += $Regexp::Common::comment::scores
+                                      [ord (chop $x) - ord ('a')] while length $x;
+                                $s  >= 5 && $s < 18})XXX|)}x;
+              $re;
+          },
+          version  => 5.008,
+          ;
+  }
+  
+  
+  # http://www.cray.com/craydoc/manuals/007-3692-005/html-007-3692-005/
+  #  (Goto table of contents/3.3 Source Form)
+  # Fortran, in fixed format. Comments start with a C, c or * in the first
+  # column, or a ! anywhere, but the sixth column. Then end with a newline.
+  pattern name    =>  [qw /comment Fortran fixed/],
+          create  =>  '(?k:(?k:(?:^[Cc*]|(?<!^.....)!))(?k:[^\n]*)(?k:\n))'
+          ;
+  
+  
+  # http://www.csis.ul.ie/cobol/Course/COBOLIntro.htm
+  # Traditionally, comments in COBOL were indicated with an asteriks in
+  # the seventh column. Modern compilers may be more lenient.
+  pattern name    =>  [qw /comment COBOL/],
+          create  =>  '(?<=^......)(?k:(?k:[*])(?k:[^\n]*)(?k:\n))',
+          version =>  '5.008',
+          ;
+  
+  1;
+  
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::comment -- provide regexes for comments.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /comment/;
+  
+      while (<>) {
+          /$RE{comment}{C}/       and  print "Contains a C comment\n";
+          /$RE{comment}{C++}/     and  print "Contains a C++ comment\n";
+          /$RE{comment}{PHP}/     and  print "Contains a PHP comment\n";
+          /$RE{comment}{Java}/    and  print "Contains a Java comment\n";
+          /$RE{comment}{Perl}/    and  print "Contains a Perl comment\n";
+          /$RE{comment}{awk}/     and  print "Contains an awk comment\n";
+          /$RE{comment}{HTML}/    and  print "Contains an HTML comment\n";
+      }
+  
+      use Regexp::Common qw /comment RE_comment_HTML/;
+  
+      while (<>) {
+          $_ =~ RE_comment_HTML() and  print "Contains an HTML comment\n";
+      }
+  
+  =head1 DESCRIPTION
+  
+  Please consult the manual of L<Regexp::Common> for a general description
+  of the works of this interface.
+  
+  Do not use this module directly, but load it via I<Regexp::Common>.
+  
+  This modules gives you regular expressions for comments in various
+  languages.
+  
+  =head2 THE LANGUAGES
+  
+  Below, the comments of each of the languages are described.
+  The patterns are available as C<$RE{comment}{I<LANG>}>, foreach
+  language I<LANG>. Some languages have variants; it's described
+  at the individual languages how to get the patterns for the variants.
+  Unless mentioned otherwise,
+  C<{-keep}> sets C<$1>, C<$2>, C<$3> and C<$4> to the entire comment,
+  the opening marker, the content of the comment, and the closing marker
+  (for many languages, the latter is a newline) respectively.
+  
+  =over 4
+  
+  =item ABC
+  
+  Comments in I<ABC> start with a backslash (C<\>), and last till
+  the end of the line.
+  See L<http://homepages.cwi.nl/%7Esteven/abc/>.
+  
+  =item Ada
+  
+  Comments in I<Ada> start with C<-->, and last till the end of the line.
+  
+  =item Advisor
+  
+  I<Advisor> is a language used by the HP product I<glance>. Comments for
+  this language start with either C<#> or C<//>, and last till the
+  end of the line.
+  
+  =item Advsys
+  
+  Comments for the I<Advsys> language start with C<;> and last till
+  the end of the line. See also L<http://www.wurb.com/if/devsys/12>.
+  
+  =item Alan
+  
+  I<Alan> comments start with C<-->, and last till the end of the line.
+  See also L<http://w1.132.telia.com/~u13207378/alan/manual/alanTOC.html>.
+  
+  =item Algol 60
+  
+  Comments in the I<Algol 60> language start with the keyword C<comment>,
+  and end with a C<;>. See L<http://www.masswerk.at/algol60/report.htm>.
+  
+  =item Algol 68
+  
+  In I<Algol 68>, comments are either delimited by C<#>, or by one of the
+  keywords C<co> or C<comment>. The keywords should not be part of another
+  word. See L<http://westein.arb-phys.uni-dortmund.de/~wb/a68s.txt>.
+  With C<{-keep}>, only C<$1> will be set, returning the entire comment.
+  
+  =item ALPACA
+  
+  The I<ALPACA> language has comments starting with C</*> and ending with C<*/>.
+  
+  =item awk
+  
+  The I<awk> programming language uses comments that start with C<#>
+  and end at the end of the line.
+  
+  =item B
+  
+  The I<B> language has comments starting with C</*> and ending with C<*/>.
+  
+  =item BASIC
+  
+  There are various forms of BASIC around. Currently, we only support the
+  variant supported by I<mvEnterprise>, whose pattern is available as
+  C<$RE{comment}{BASIC}{mvEnterprise}>. Comments in this language start with a
+  C<!>, a C<*> or the keyword C<REM>, and end till the end of the line. See
+  L<http://www.rainingdata.com/products/beta/docs/mve/50/ReferenceManual/Basic.pdf>.
+  
+  =item Beatnik
+  
+  The esotoric language I<Beatnik> only uses words consisting of letters.
+  Words are scored according to the rules of Scrabble. Words scoring less
+  than 5 points, or 18 points or more are considered comments (although
+  the compiler might mock at you if you score less than 5 points).
+  Regardless whether C<{-keep}>, C<$1> will be set, and set to the
+  entire comment. This pattern requires I<perl 5.8.0> or newer.
+  
+  =item beta-Juliet
+  
+  The I<beta-Juliet> programming language has comments that start with
+  C<//> and that continue till the end of the line. See also
+  L<http://www.catseye.mb.ca/esoteric/b-juliet/index.html>.
+  
+  =item Befunge-98
+  
+  The esotoric language I<Befunge-98> uses comments that start and end
+  with a C<;>. See L<http://www.catseye.mb.ca/esoteric/befunge/98/spec98.html>.
+  
+  =item BML                 
+  
+  I<BML>, or I<Better Markup Language> is an HTML templating language that
+  uses comments starting with C<< <?c_ >>, and ending with C<< c_?> >>.
+  See L<http://www.livejournal.com/doc/server/bml.index.html>.               
+  
+  =item Brainfuck
+  
+  The minimal language I<Brainfuck> uses only eight characters, 
+  C<E<lt>>, C<E<gt>>, C<[>, C<]>, C<+>, C<->, C<.> and C<,>.
+  Any other characters are considered comments. With C<{-keep}>,
+  C<$1> is set to the entire comment.
+  
+  =item C
+  
+  The I<C> language has comments starting with C</*> and ending with C<*/>.
+  
+  =item C--
+  
+  The I<C--> language has comments starting with C</*> and ending with C<*/>.
+  See L<http://cs.uas.arizona.edu/classes/453/programs/C--Spec.html>.
+  
+  =item C++
+  
+  The I<C++> language has two forms of comments. Comments that start with
+  C<//> and last till the end of the line, and comments that start with
+  C</*>, and end with C<*/>. If C<{-keep}> is used, only C<$1> will be
+  set, and set to the entire comment.
+  
+  =item C#
+  
+  The I<C#> language has two forms of comments. Comments that start with
+  C<//> and last till the end of the line, and comments that start with
+  C</*>, and end with C<*/>. If C<{-keep}> is used, only C<$1> will be
+  set, and set to the entire comment.
+  See L<http://msdn.microsoft.com/library/default.asp?url=/library/en-us/csspec/html/vclrfcsharpspec_C.asp>.
+  
+  =item Caml
+  
+  Comments in I<Caml> start with C<(*>, end with C<*)>, and can be nested.
+  See L<http://www.cs.caltech.edu/courses/cs134/cs134b/book.pdf> and
+  L<http://pauillac.inria.fr/caml/index-eng.html>.
+  
+  =item Cg
+  
+  The I<Cg> language has two forms of comments. Comments that start with
+  C<//> and last till the end of the line, and comments that start with
+  C</*>, and end with C<*/>. If C<{-keep}> is used, only C<$1> will be
+  set, and set to the entire comment.
+  See L<http://developer.nvidia.com/attach/3722>.
+  
+  =item CLU
+  
+  In C<CLU>, a comment starts with a procent sign (C<%>), and ends with the
+  next newline. See L<ftp://ftp.lcs.mit.edu:/pub/pclu/CLU-syntax.ps> and
+  L<http://www.pmg.lcs.mit.edu/CLU.html>.
+  
+  =item COBOL
+  
+  Traditionally, comments in I<COBOL> are indicated by an asteriks in the
+  seventh column. This is what the pattern matches. Modern compiler may
+  more lenient though. See L<http://www.csis.ul.ie/cobol/Course/COBOLIntro.htm>,
+  and L<http://www.csis.ul.ie/cobol/default.htm>. Due to a bug in the regexp
+  engine of perl 5.6.x, this regexp is only available in version 5.8.0 and up.
+  
+  =item CQL
+  
+  Comments in the chess query language (I<CQL>) start with a semi colon
+  (C<;>) and last till the end of the line. See L<http://www.rbnn.com/cql/>.
+  
+  =item Crystal Report
+  
+  The formula editor in I<Crystal Reports> uses comments that start
+  with C<//>, and end with the end of the line.
+  
+  =item Dylan
+  
+  There are two types of comments in I<Dylan>. They either start with
+  C<//>, or are nested comments, delimited with C</*> and C<*/>.
+  Under C<{-keep}>, only C<$1> will be set, returning the entire comment.
+  This pattern requires I<perl 5.6.0> or newer.
+  
+  =item ECMAScript
+  
+  The I<ECMAScript> language has two forms of comments. Comments that start with
+  C<//> and last till the end of the line, and comments that start with
+  C</*>, and end with C<*/>. If C<{-keep}> is used, only C<$1> will be
+  set, and set to the entire comment. I<JavaScript> is Netscapes implementation
+  of I<ECMAScript>. See
+  L<http://www.ecma-international.org/publications/files/ecma-st/Ecma-262.pdf>,
+  and L<http://www.ecma-international.org/publications/standards/Ecma-262.htm>.
+  
+  =item Eiffel
+  
+  I<Eiffel> comments start with C<-->, and last till the end of the line.
+  
+  =item False
+  
+  In I<False>, comments start with C<{> and end with C<}>.
+  See L<http://wouter.fov120.com/false/false.txt>
+  
+  =item FPL
+  
+  The I<FPL> language has two forms of comments. Comments that start with
+  C<//> and last till the end of the line, and comments that start with
+  C</*>, and end with C<*/>. If C<{-keep}> is used, only C<$1> will be
+  set, and set to the entire comment.
+  
+  =item Forth
+  
+  Comments in Forth start with C<\>, and end with the end of the line.
+  See also L<http://docs.sun.com/sb/doc/806-1377-10>.
+  
+  =item Fortran
+  
+  There are two forms of I<Fortran>. There's free form I<Fortran>, which
+  has comments that start with C<!>, and end at the end of the line.
+  The pattern for this is given by C<$RE{Fortran}>. Fixed form I<Fortran>,
+  which has been obsoleted, has comments that start with C<C>, C<c> or
+  C<*> in the first column, or with C<!> anywhere, but the sixth column.
+  The pattern for this are given by C<$RE{Fortran}{fixed}>.
+  
+  See also L<http://www.cray.com/craydoc/manuals/007-3692-005/html-007-3692-005/>.
+  
+  =item Funge-98
+  
+  The esotoric language I<Funge-98> uses comments that start and end with
+  a C<;>.
+  
+  =item fvwm2
+  
+  Configuration files for I<fvwm2> have comments starting with a
+  C<#> and lasting the rest of the line.
+  
+  =item Haifu
+  
+  I<Haifu>, an esotoric language using haikus, has comments starting and
+  ending with a C<,>.
+  See L<http://www.dangermouse.net/esoteric/haifu.html>.
+  
+  =item Haskell
+  
+  There are two types of comments in I<Haskell>. They either start with
+  at least two dashes, or are nested comments, delimited with C<{-> and C<-}>.
+  Under C<{-keep}>, only C<$1> will be set, returning the entire comment.
+  This pattern requires I<perl 5.6.0> or newer.
+  
+  =item HTML
+  
+  In I<HTML>, comments only appear inside a I<comment declaration>.
+  A comment declaration starts with a C<E<lt>!>, and ends with a
+  C<E<gt>>. Inside this declaration, we have zero or more comments.
+  Comments starts with C<--> and end with C<-->, and are optionally
+  followed by whitespace. The pattern C<$RE{comment}{HTML}> recognizes
+  those comment declarations (and hence more than a comment).
+  Note that this is not the same as something that starts with
+  C<E<lt>!--> and ends with C<--E<gt>>, because the following will
+  be matched completely:
+  
+      <!--  First  Comment   --
+        --> Second Comment <!--
+        --  Third  Comment   -->
+  
+  Do not be fooled by what your favourite browser thinks is an HTML
+  comment.
+  
+  If C<{-keep}> is used, the following are returned:
+  
+  =over 4
+  
+  =item $1
+  
+  captures the entire comment declaration.
+  
+  =item $2
+  
+  captures the MDO (markup declaration open), C<E<lt>!>.
+  
+  =item $3
+  
+  captures the content between the MDO and the MDC.
+  
+  =item $4
+  
+  captures the (last) comment, without the surrounding dashes.
+  
+  =item $5
+  
+  captures the MDC (markup declaration close), C<E<gt>>.
+  
+  =back
+  
+  =item Hugo
+  
+  There are two types of comments in I<Hugo>. They either start with
+  C<!> (which cannot be followed by a C<\>), or are nested comments,
+  delimited with C<!\> and C<\!>.
+  Under C<{-keep}>, only C<$1> will be set, returning the entire comment.
+  This pattern requires I<perl 5.6.0> or newer.
+  
+  =item Icon
+  
+  I<Icon> has comments that start with C<#> and end at the next new line.
+  See L<http://www.toolsofcomputing.com/IconHandbook/IconHandbook.pdf>,
+  L<http://www.cs.arizona.edu/icon/index.htm>, and
+  L<http://burks.bton.ac.uk/burks/language/icon/index.htm>.
+  
+  =item ILLGOL
+  
+  The esotoric language I<ILLGOL> uses comments starting with I<NB> and lasting
+  till the end of the line.
+  See L<http://www.catseye.mb.ca/esoteric/illgol/index.html>.
+  
+  =item INTERCAL
+  
+  Comments in INTERCAL are single line comments. They start with one of
+  the keywords C<NOT> or C<N'T>, and can optionally be preceeded by the
+  keywords C<DO> and C<PLEASE>. If both keywords are used, C<PLEASE>
+  preceeds C<DO>. Keywords are separated by whitespace.
+  
+  =item J
+  
+  The language I<J> uses comments that start with C<NB.>, and that last till
+  the end of the line. See
+  L<http://www.jsoftware.com/books/help/primer/contents.htm>, and
+  L<http://www.jsoftware.com/>.
+  
+  =item Java
+  
+  The I<Java> language has two forms of comments. Comments that start with
+  C<//> and last till the end of the line, and comments that start with
+  C</*>, and end with C<*/>. If C<{-keep}> is used, only C<$1> will be
+  set, and set to the entire comment.
+  
+  =item JavaScript
+  
+  The I<JavaScript> language has two forms of comments. Comments that start with
+  C<//> and last till the end of the line, and comments that start with
+  C</*>, and end with C<*/>. If C<{-keep}> is used, only C<$1> will be
+  set, and set to the entire comment. I<JavaScript> is Netscapes implementation
+  of I<ECMAScript>.
+  See L<http://www.mozilla.org/js/language/E262-3.pdf>,
+  and L<http://www.mozilla.org/js/language/>.
+  
+  =item LaTeX
+  
+  The documentation language I<LaTeX> uses comments starting with C<%>
+  and ending at the end of the line.
+  
+  =item Lisp
+  
+  Comments in I<Lisp> start with a semi-colon (C<;>) and last till the
+  end of the line.
+  
+  =item LPC
+  
+  The I<LPC> language has comments starting with C</*> and ending with C<*/>.
+  
+  =item LOGO
+  
+  Comments for the language I<LOGO> start with C<;>, and last till the end
+  of the line.
+  
+  =item lua
+  
+  Comments for the I<lua> language start with C<-->, and last till the end
+  of the line. See also L<http://www.lua.org/manual/manual.html>.
+  
+  =item M, MUMPS
+  
+  In C<M> (aka C<MUMPS>), comments start with a semi-colon, and last
+  till the end of a line. The language specification requires the 
+  semi-colon to be preceeded by one or more I<linestart character>s.
+  Those characters default to a space, but that's configurable. This
+  requirement, of preceeding the comment with linestart characters is
+  B<not> tested for. See
+  L<ftp://ftp.intersys.com/pub/openm/ism/ism64docs.zip>,
+  L<http://mtechnology.intersys.com/mproducts/openm/index.html>, and
+  L<http://mcenter.com/mtrc/index.html>.
+  
+  =item m4
+  
+  By default, the preprocessor language I<m4> uses single line comments,
+  that start with a C<#> and continue to the end of the line, including
+  the newline. The pattern C<$RE {comment} {m4}> matches such comments.
+  In I<m4>, it is possible to change the starting token though.
+  See L<http://wolfram.schneider.org/bsd/7thEdManVol2/m4/m4.pdf>,
+  L<http://www.cs.stir.ac.uk/~kjt/research/pdf/expl-m4.pdf>, and
+  L<http://www.gnu.org/software/m4/manual/>.
+  
+  =item Modula-2
+  
+  In C<Modula-2>, comments start with C<(*>, and end with C<*)>. Comments
+  may be nested. See L<http://www.modula2.org/>.
+  
+  =item Modula-3
+  
+  In C<Modula-3>, comments start with C<(*>, and end with C<*)>. Comments
+  may be nested. See L<http://www.m3.org/>.
+  
+  =item mutt
+  
+  Configuration files for I<mutt> have comments starting with a
+  C<#> and lasting the rest of the line.
+  
+  =item Nickle
+  
+  The I<Nickle> language has one line comments starting with C<#>
+  (like Perl), or multiline comments delimited by C</*> and C<*/>
+  (like C). Under C<-keep>, only C<$1> will be set. See also
+  L<http://www.nickle.org>.
+  
+  =item Oberon
+  
+  Comments in I<Oberon> start with C<(*> and end with C<*)>.
+  See L<http://www.oberon.ethz.ch/oreport.html>.
+  
+  =item Pascal
+  
+  There are many implementations of Pascal. This modules provides
+  pattern for comments of several implementations.
+  
+  =over 4
+  
+  =item C<$RE{comment}{Pascal}>
+  
+  This is the pattern that recognizes comments according to the Pascal ISO 
+  standard. This standard says that comments start with either C<{>, or
+  C<(*>, and end with C<}> or C<*)>. This means that C<{*)> and C<(*}>
+  are considered to be comments. Many Pascal applications don't allow this.
+  See L<http://www.pascal-central.com/docs/iso10206.txt>
+  
+  =item C<$RE{comment}{Alice}>
+  
+  The I<Alice Pascal> compiler accepts comments that start with C<{>
+  and end with C<}>. Comments are not allowed to contain newlines.
+  See L<http://www.templetons.com/brad/alice/language/>.
+  
+  =item C<$RE{comment}{Pascal}{Delphi}>, C<$RE{comment}{Pascal}{Free}>
+  and C<$RE{comment}{Pascal}{GPC}>
+  
+  The I<Delphi Pascal>, I<Free Pascal> and the I<Gnu Pascal Compiler>
+  implementations of Pascal all have comments that either start with
+  C<//> and last till the end of the line, are delimited with C<{>
+  and C<}> or are delimited with C<(*> and C<*)>. Patterns for those
+  comments are given by C<$RE{comment}{Pascal}{Delphi}>, 
+  C<$RE{comment}{Pascal}{Free}> and C<$RE{comment}{Pascal}{GPC}>
+  respectively. These patterns only set C<$1> when C<{-keep}> is used,
+  which will then include the entire comment.
+  
+  See L<http://info.borland.com/techpubs/delphi5/oplg/>, 
+  L<http://www.freepascal.org/docs-html/ref/ref.html> and
+  L<http://www.gnu-pascal.de/gpc/>.
+  
+  =item C<$RE{comment}{Pascal}{Workshop}>
+  
+  The I<Workshop Pascal> compiler, from SUN Microsystems, allows comments
+  that are delimited with either C<{> and C<}>, delimited with
+  C<(*)> and C<*>), delimited with C</*>, and C<*/>, or starting
+  and ending with a double quote (C<">). When C<{-keep}> is used,
+  only C<$1> is set, and returns the entire comment.
+  
+  See L<http://docs.sun.com/db/doc/802-5762>.
+  
+  =back
+  
+  =item PEARL
+  
+  Comments in I<PEARL> start with a C<!> and last till the end of the
+  line, or start with C</*> and end with C<*/>. With C<{-keep}>, 
+  C<$1> will be set to the entire comment.
+  
+  =item PHP
+  
+  Comments in I<PHP> start with either C<#> or C<//> and last till the
+  end of the line, or are delimited by C</*> and C<*/>. With C<{-keep}>,
+  C<$1> will be set to the entire comment.
+  
+  =item PL/B
+  
+  In I<PL/B>, comments start with either C<.> or C<;>, and end with the 
+  next newline. See L<http://www.mmcctech.com/pl-b/plb-0010.htm>.
+  
+  =item PL/I
+  
+  The I<PL/I> language has comments starting with C</*> and ending with C<*/>.
+  
+  =item PL/SQL
+  
+  In I<PL/SQL>, comments either start with C<--> and run till the end
+  of the line, or start with C</*> and end with C<*/>.
+  
+  =item Perl
+  
+  I<Perl> uses comments that start with a C<#>, and continue till the end
+  of the line.
+  
+  =item Portia
+  
+  The I<Portia> programming language has comments that start with C<//>,
+  and last till the end of the line.
+  
+  =item Python
+  
+  I<Python> uses comments that start with a C<#>, and continue till the end
+  of the line.
+  
+  =item Q-BAL
+  
+  Comments in the I<Q-BAL> language start with C<`> (a backtick), and
+  contine till the end of the line.
+  
+  =item QML
+  
+  In C<QML>, comments start with C<#> and last till the end of the line.
+  See L<http://www.questionmark.com/uk/qml/overview.doc>.
+  
+  =item R
+  
+  The statistical language I<R> uses comments that start with a C<#> and
+  end with the following new line. See L<http://www.r-project.org/>.
+  
+  =item REBOL
+  
+  Comments for the I<REBOL> language start with C<;> and last till the
+  end of the line.
+  
+  =item Ruby
+  
+  Comments in I<Ruby> start with C<#> and last till the end of the time.
+  
+  =item Scheme
+  
+  I<Scheme> comments start with C<;>, and last till the end of the line.
+  See L<http://schemers.org/>.
+  
+  =item shell
+  
+  Comments in various I<shell>s start with a C<#> and end at the end of
+  the line.
+  
+  =item Shelta
+  
+  The esotoric language I<Shelta> uses comments that start and end with
+  a C<;>. See L<http://www.catseye.mb.ca/esoteric/shelta/index.html>.
+  
+  =item SLIDE
+  
+  The I<SLIDE> language has two froms of comments. First there is the
+  line comment, which starts with a C<#> and includes the rest of the
+  line (just like Perl). Second, there is the multiline, nested comment,
+  which are delimited by C<(*> and C<*)>. Under C{-keep}>, only 
+  C<$1> is set, and is set to the entire comment. This pattern needs
+  at least Perl version 5.6.0. See
+  L<http://www.cs.berkeley.edu/~ug/slide/docs/slide/spec/spec_frame_intro.shtml>.
+  
+  =item slrn
+  
+  Configuration files for I<slrn> have comments starting with a
+  C<%> and lasting the rest of the line.
+  
+  =item Smalltalk
+  
+  I<Smalltalk> uses comments that start and end with a double quote, C<">.
+  
+  =item SMITH
+  
+  Comments in the I<SMITH> language start with C<;>, and last till the
+  end of the line.
+  
+  =item Squeak
+  
+  In the Smalltalk variant I<Squeak>, comments start and end with
+  C<">. Double quotes can appear inside comments by doubling them.
+  
+  =item SQL
+  
+  Standard I<SQL> uses comments starting with two or more dashes, and
+  ending at the end of the line. 
+  
+  I<MySQL> does not follow the standard. Instead, it allows comments
+  that start with a C<#> or C<-- > (that's two dashes and a space)
+  ending with the following newline, and comments starting with 
+  C</*>, and ending with the next C<;> or C<*/> that isn't inside
+  single or double quotes. A pattern for this is returned by
+  C<$RE{comment}{SQL}{MySQL}>. With C<{-keep}>, only C<$1> will
+  be set, and it returns the entire comment.
+  
+  =item Tcl
+  
+  In I<Tcl>, comments start with C<#> and continue till the end of the line.
+  
+  =item TeX
+  
+  The documentation language I<TeX> uses comments starting with C<%>
+  and ending at the end of the line.
+  
+  =item troff
+  
+  The document formatting language I<troff> uses comments starting
+  with C<\">, and continuing till the end of the line.
+  
+  =item Ubercode
+  
+  The Windows programming language I<Ubercode> uses comments that start with
+  C<//> and continue to the end of the line. See L<http://www.ubercode.com>.
+  
+  =item vi
+  
+  In configuration files for the editor I<vi>, one can use comments
+  starting with C<">, and ending at the end of the line.
+  
+  =item *W
+  
+  In the language I<*W>, comments start with C<||>, and end with C<!!>.
+  
+  =item zonefile
+  
+  Comments in DNS I<zonefile>s start with C<;>, and continue till the
+  end of the line.
+  
+  =item ZZT-OOP
+  
+  The in-game language I<ZZT-OOP> uses comments that start with a C<'> 
+  character, and end at the following newline. See
+  L<http://dave2.rocketjump.org/rad/zzthelp/lang.html>.
+  
+  =back
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<[Go 90]>
+  
+  Charles F. Goldfarb: I<The SGML Handbook>. Oxford: Oxford University
+  Press. B<1990>. ISBN 0-19-853737-9. Ch. 10.3, pp 390-391.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common> for a general description of how to use this interface.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  For a start, there are many common regexes missing.
+  Send them in to I<regexp-common@abigail.be>.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_COMMENT
+
+$fatpacked{"Regexp/Common/delimited.pm"} = <<'REGEXP_COMMON_DELIMITED';
+  package Regexp::Common::delimited;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  sub gen_delimited {
+  
+      my ($dels, $escs) = @_;
+      # return '(?:\S*)' unless $dels =~ /\S/;
+      if (length $escs) {
+          $escs .= substr ($escs, -1) x (length ($dels) - length ($escs));
+      }
+      my @pat = ();
+      my $i;
+      for ($i=0; $i < length $dels; $i++) {
+          my $del = quotemeta substr ($dels, $i, 1);
+          my $esc = length($escs) ? quotemeta substr ($escs, $i, 1) : "";
+          if ($del eq $esc) {
+              push @pat,
+                   "(?k:$del)(?k:[^$del]*(?:(?:$del$del)[^$del]*)*)(?k:$del)";
+          }
+          elsif (length $esc) {
+              push @pat,
+                   "(?k:$del)(?k:[^$esc$del]*(?:$esc.[^$esc$del]*)*)(?k:$del)";
+          }
+          else {
+              push @pat, "(?k:$del)(?k:[^$del]*)(?k:$del)";
+          }
+      }
+      my $pat = join '|', @pat;
+      return "(?k:$pat)";
+  }
+  
+  sub _croak {
+      require Carp;
+      goto &Carp::croak;
+  }
+  
+  pattern name   => [qw( delimited -delim= -esc=\\ )],
+          create => sub {my $flags = $_[1];
+                         _croak 'Must specify delimiter in $RE{delimited}'
+                               unless length $flags->{-delim};
+                         return gen_delimited (@{$flags}{-delim, -esc});
+                    },
+          ;
+  
+  pattern name   => [qw( quoted -esc=\\ )],
+          create => sub {my $flags = $_[1];
+                         return gen_delimited (q{"'`}, $flags -> {-esc});
+                    },
+          ;
+  
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::delimited -- provides a regex for delimited strings
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /delimited/;
+  
+      while (<>) {
+          /$RE{delimited}{-delim=>'"'}/  and print 'a \" delimited string';
+          /$RE{delimited}{-delim=>'/'}/  and print 'a \/ delimited string';
+      }
+  
+  
+  =head1 DESCRIPTION
+  
+  Please consult the manual of L<Regexp::Common> for a general description
+  of the works of this interface.
+  
+  Do not use this module directly, but load it via I<Regexp::Common>.
+  
+  =head2 C<$RE{delimited}{-delim}{-esc}>
+  
+  Returns a pattern that matches a single-character-delimited substring,
+  with optional internal escaping of the delimiter.
+  
+  When C<-delim=I<S>> is specified, each character in the sequence I<S> is
+  a possible delimiter. There is no default delimiter, so this flag must always
+  be specified.
+  
+  If C<-esc=I<S>> is specified, each character in the sequence I<S> is
+  the delimiter for the corresponding character in the C<-delim=I<S>> list.
+  The default escape is backslash.
+  
+  For example:
+  
+     $RE{delimited}{-delim=>'"'}            # match "a \" delimited string"
+     $RE{delimited}{-delim=>'"'}{-esc=>'"'} # match "a "" delimited string"
+     $RE{delimited}{-delim=>'/'}            # match /a \/ delimited string/
+     $RE{delimited}{-delim=>q{'"}}          # match "string" or 'string'
+  
+  Under C<-keep> (See L<Regexp::Common>):
+  
+  =over 4
+  
+  =item $1
+  
+  captures the entire match
+  
+  =item $2
+  
+  captures the opening delimiter (provided only one delimiter was specified)
+  
+  =item $3
+  
+  captures delimited portion of the string (provided only one delimiter was
+  specified)
+  
+  =item $4
+  
+  captures the closing delimiter (provided only one delimiter was specified)
+  
+  =back
+  
+  =head2 $RE{quoted}{-esc}
+  
+  A synonym for C<$RE{delimited}{q{-delim='"`}{...}}>
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common> for a general description of how to use this interface.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  For a start, there are many common regexes missing.
+  Send them in to I<regexp-common@abigail.be>.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_DELIMITED
+
+$fatpacked{"Regexp/Common/lingua.pm"} = <<'REGEXP_COMMON_LINGUA';
+  package Regexp::Common::lingua;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  pattern name    => [qw /lingua palindrome -chars=[A-Za-z]/],
+          create  => sub {
+              use re 'eval';
+              my $keep = exists $_ [1] -> {-keep};
+              my $ch   = $_ [1] -> {-chars};
+              my $idx  = $keep ? "1:$ch" : "0:$ch";
+              my $r    = "(??{\$Regexp::Common::lingua::pd{'" . $idx . "'}})";
+              $Regexp::Common::lingua::pd {$idx} = 
+                      $keep ? qr /($ch|($ch)($r)?\2)/ : qr  /$ch|($ch)($r)?\1/;
+          #   print "[$ch]: ", $Regexp::Common::lingua::pd {$idx}, "\n";
+          #   $Regexp::Common::lingua::pd {$idx};
+          },
+          version => 5.006
+          ;
+  
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::lingua -- provide regexes for language related stuff.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /lingua/;
+  
+      while (<>) {
+          /^$RE{lingua}{palindrome}$/    and  print "is a palindrome\n";
+      }
+  
+  
+  =head1 DESCRIPTION
+  
+  Please consult the manual of L<Regexp::Common> for a general description
+  of the works of this interface.
+  
+  Do not use this module directly, but load it via I<Regexp::Common>.
+  
+  =head2 C<$RE{lingua}{palindrome}>
+  
+  Returns a pattern that recognizes a palindrome, a string that is the
+  same if you reverse it. By default, it only matches strings consisting
+  of letters, but this can be changed using the C<{-chars}> option.
+  This option takes a character class (default is C<[A-Za-z]>) as
+  argument.
+  
+  If C<{-keep}> is used, only C<$1> will be set, and set to the entire
+  match. 
+  
+  This pattern requires at least perl 5.6.0.
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common> for a general description of how to use this interface.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Many regexes are missing.
+  Send them in to I<regexp-common@abigail.be>.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_LINGUA
+
+$fatpacked{"Regexp/Common/list.pm"} = <<'REGEXP_COMMON_LIST';
+  package Regexp::Common::list;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  sub gen_list_pattern {
+      my ($pat, $sep, $lsep) = @_;
+      $lsep = $sep unless defined $lsep;
+      return "(?k:(?:(?:$pat)(?:$sep))*(?:$pat)(?k:$lsep)(?:$pat))";
+  }
+  
+  my $defpat = '.*?\S';
+  my $defsep = '\s*,\s*';
+  
+  pattern name   => ['list', "-pat=$defpat", "-sep=$defsep", '-lastsep'],
+          create => sub {gen_list_pattern (@{$_[1]}{-pat, -sep, -lastsep})},
+          ;
+  
+  pattern name   => ['list', 'conj', '-word=(?:and|or)'],
+          create => sub {gen_list_pattern($defpat, $defsep,
+                                          '\s*,?\s*'.$_[1]->{-word}.'\s*');
+                    },
+          ;
+  
+  pattern name   => ['list', 'and'],
+          create => sub {gen_list_pattern ($defpat, $defsep, '\s*,?\s*and\s*')},
+          ;
+  
+  pattern name   => ['list', 'or'],
+          create => sub {gen_list_pattern ($defpat, $defsep, '\s*,?\s*or\s*')},
+          ;
+  
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::list -- provide regexes for lists
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /list/;
+  
+      while (<>) {
+          /$RE{list}{-pat => '\w+'}/          and print "List of words";
+          /$RE{list}{-pat => $RE{num}{real}}/ and print "List of numbers";
+      }
+  
+  
+  =head1 DESCRIPTION
+  
+  Please consult the manual of L<Regexp::Common> for a general description
+  of the works of this interface.
+  
+  Do not use this module directly, but load it via I<Regexp::Common>.
+  
+  =head2 C<$RE{list}{-pat}{-sep}{-lastsep}>
+  
+  Returns a pattern matching a list of (at least two) substrings.
+  
+  If C<-pat=I<P>> is specified, it defines the pattern for each substring
+  in the list. By default, I<P> is C<qr/.*?\S/>. In Regexp::Common 0.02
+  or earlier, the default pattern was C<qr/.*?/>. But that will match
+  a single space, causing unintended parsing of C<a, b, and c> as a
+  list of four elements instead of 3 (with C<-word> being C<(?:and)>).
+  One consequence is that a list of the form "a,,b" will no longer be
+  parsed. Use the pattern C<qr /.*?/> to be able to parse this, but see
+  the previous remark.
+  
+  If C<-sep=I<P>> is specified, it defines the pattern I<P> to be used as
+  a separator between each pair of substrings in the list, except the final two.
+  By default I<P> is C<qr/\s*,\s*/>.
+  
+  If C<-lastsep=I<P>> is specified, it defines the pattern I<P> to be used as
+  a separator between the final two substrings in the list.
+  By default I<P> is the same as the pattern specified by the C<-sep> flag.
+  
+  For example:
+  
+        $RE{list}{-pat=>'\w+'}                # match a list of word chars
+        $RE{list}{-pat=>$RE{num}{real}}       # match a list of numbers
+        $RE{list}{-sep=>"\t"}                 # match a tab-separated list
+        $RE{list}{-lastsep=>',\s+and\s+'}     # match a proper English list
+  
+  Under C<-keep>:
+  
+  =over 4
+  
+  =item $1
+  
+  captures the entire list
+  
+  =item $2
+  
+  captures the last separator
+  
+  =back
+  
+  =head2 C<$RE{list}{conj}{-word=I<PATTERN>}>
+  
+  An alias for C<< $RE{list}{-lastsep=>'\s*,?\s*I<PATTERN>\s*'} >>
+  
+  If C<-word> is not specified, the default pattern is C<qr/and|or/>.
+  
+  For example:
+  
+        $RE{list}{conj}{-word=>'et'}        # match Jean, Paul, et Satre
+        $RE{list}{conj}{-word=>'oder'}      # match Bonn, Koln oder Hamburg
+  
+  =head2 C<$RE{list}{and}>
+  
+  An alias for C<< $RE{list}{conj}{-word=>'and'} >>
+  
+  =head2 C<$RE{list}{or}>
+  
+  An alias for C<< $RE{list}{conj}{-word=>'or'} >>
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common> for a general description of how to use this interface.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  For a start, there are many common regexes missing.
+  Send them in to I<regexp-common@abigail.be>.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_LIST
+
+$fatpacked{"Regexp/Common/net.pm"} = <<'REGEXP_COMMON_NET';
+  package Regexp::Common::net;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  my %IPunit = (
+      dec => q{(?k:25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})},
+      oct => q{(?k:[0-3]?[0-7]{1,2})},
+      hex => q{(?k:[0-9a-fA-F]{1,2})},
+      bin => q{(?k:[0-1]{1,8})},
+  );
+  my %MACunit = (
+      %IPunit,
+      hex => q{(?k:[0-9a-fA-F]{1,2})},
+  );
+  
+  sub dec {$_};
+  sub bin {oct "0b$_"}
+  
+  my $IPdefsep  = '[.]';
+  my $MACdefsep =  ':';
+  
+  pattern name   => [qw (net IPv4)],
+          create => "(?k:$IPunit{dec}$IPdefsep$IPunit{dec}$IPdefsep" .
+                        "$IPunit{dec}$IPdefsep$IPunit{dec})",
+          ;
+  
+  pattern name   => [qw (net MAC)],
+          create => "(?k:" . join ($MACdefsep => ($MACunit{hex}) x 6) . ")",
+          subs   => sub {
+              $_ [1] = join ":" => map {sprintf "%02x" => hex}
+                                   split /$MACdefsep/ => $_ [1]
+                       if $_ [1] =~ /$_[0]/
+          },
+          ;
+  
+  foreach my $type (qw /dec oct hex bin/) {
+      pattern name   => [qw (net IPv4), $type, "-sep=$IPdefsep"],
+              create => sub {my $sep = $_ [1] -> {-sep};
+                             "(?k:$IPunit{$type}$sep$IPunit{$type}$sep" .
+                                 "$IPunit{$type}$sep$IPunit{$type})"
+                        },
+              ;
+  
+      pattern name   => [qw (net MAC), $type, "-sep=$MACdefsep"],
+              create => sub {my $sep = $_ [1] -> {-sep};
+                             "(?k:" . join ($sep => ($MACunit{$type}) x 6) . ")",
+                        },
+              subs   => sub {
+                  return if $] < 5.006 and $type eq 'bin';
+                  $_ [1] = join ":" => map {sprintf "%02x" => eval $type}
+                                       $2, $3, $4, $5, $6, $7
+                           if $_ [1] =~ $RE {net} {MAC} {$type}
+                                            {-sep => $_ [0] -> {flags} {-sep}}
+                                            {-keep};
+              },
+              ;
+  
+  }
+  
+  my $letter      =  "[A-Za-z]";
+  my $let_dig     =  "[A-Za-z0-9]";
+  my $let_dig_hyp = "[-A-Za-z0-9]";
+  
+  # Domain names, from RFC 1035.
+  pattern name   => [qw (net domain -nospace=)],
+          create => sub {
+              if (exists $_ [1] {-nospace} && !defined $_ [1] {-nospace}) {
+                  return "(?k:$letter(?:(?:$let_dig_hyp){0,61}$let_dig)?" .
+                         "(?:\\.$letter(?:(?:$let_dig_hyp){0,61}$let_dig)?)*)"
+              }
+              else {
+                  return "(?k: |(?:$letter(?:(?:$let_dig_hyp){0,61}$let_dig)?" .
+                         "(?:\\.$letter(?:(?:$let_dig_hyp){0,61}$let_dig)?)*))"
+              }
+          },
+          ;
+  
+  
+  
+  1;
+  
+  __END__
+  
+  =head1 NAME
+  
+  Regexp::Common::net -- provide regexes for IPv4 addresses.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /net/;
+  
+      while (<>) {
+          /$RE{net}{IPv4}/       and print "Dotted decimal IP address";
+          /$RE{net}{IPv4}{hex}/  and print "Dotted hexadecimal IP address";
+          /$RE{net}{IPv4}{oct}{-sep => ':'}/ and
+                                 print "Colon separated octal IP address";
+          /$RE{net}{IPv4}{bin}/  and print "Dotted binary IP address";
+          /$RE{net}{MAC}/        and print "MAC address";
+          /$RE{net}{MAC}{oct}{-sep => " "}/ and
+                                 print "Space separated octal MAC address";
+      }
+  
+  =head1 DESCRIPTION
+  
+  Please consult the manual of L<Regexp::Common> for a general description
+  of the works of this interface.
+  
+  Do not use this module directly, but load it via I<Regexp::Common>.
+  
+  This modules gives you regular expressions for various style IPv4 
+  and MAC (or ethernet) addresses.
+  
+  =head2 C<$RE{net}{IPv4}>
+  
+  Returns a pattern that matches a valid IP address in "dotted decimal".
+  Note that while C<318.99.183.11> is not a valid IP address, it does
+  match C</$RE{net}{IPv4}/>, but this is because C<318.99.183.11> contains
+  a valid IP address, namely C<18.99.183.11>. To prevent the unwanted
+  matching, one needs to anchor the regexp: C</^$RE{net}{IPv4}$/>.
+  
+  For this pattern and the next four, under C<-keep> (See L<Regexp::Common>):
+  
+  =over 4
+  
+  =item $1
+  
+  captures the entire match
+  
+  =item $2
+  
+  captures the first component of the address
+  
+  =item $3
+  
+  captures the second component of the address
+  
+  =item $4
+  
+  captures the third component of the address
+  
+  =item $5
+  
+  captures the final component of the address
+  
+  =back
+  
+  =head2 C<$RE{net}{IPv4}{dec}{-sep}>
+  
+  Returns a pattern that matches a valid IP address in "dotted decimal"
+  
+  If C<< -sep=I<P> >> is specified the pattern I<P> is used as the separator.
+  By default I<P> is C<qr/[.]/>. 
+  
+  =head2 C<$RE{net}{IPv4}{hex}{-sep}>
+  
+  Returns a pattern that matches a valid IP address in "dotted hexadecimal",
+  with the letters C<A> to C<F> capitalized.
+  
+  If C<< -sep=I<P> >> is specified the pattern I<P> is used as the separator.
+  By default I<P> is C<qr/[.]/>. C<< -sep="" >> and
+  C<< -sep=" " >> are useful alternatives.
+  
+  =head2 C<$RE{net}{IPv4}{oct}{-sep}>
+  
+  Returns a pattern that matches a valid IP address in "dotted octal"
+  
+  If C<< -sep=I<P> >> is specified the pattern I<P> is used as the separator.
+  By default I<P> is C<qr/[.]/>.
+  
+  =head2 C<$RE{net}{IPv4}{bin}{-sep}>
+  
+  Returns a pattern that matches a valid IP address in "dotted binary"
+  
+  If C<< -sep=I<P> >> is specified the pattern I<P> is used as the separator.
+  By default I<P> is C<qr/[.]/>.
+  
+  =head2 C<$RE{net}{MAC}>
+  
+  Returns a pattern that matches a valid MAC or ethernet address as
+  colon separated hexadecimals.
+  
+  For this pattern, and the next four, under C<-keep> (See L<Regexp::Common>):
+  
+  =over 4
+  
+  =item $1
+  
+  captures the entire match
+  
+  =item $2
+  
+  captures the first component of the address
+  
+  =item $3
+  
+  captures the second component of the address
+  
+  =item $4
+  
+  captures the third component of the address
+  
+  =item $5
+  
+  captures the fourth component of the address
+  
+  =item $6
+  
+  captures the fifth component of the address
+  
+  =item $7
+  
+  captures the sixth and final component of the address
+  
+  =back
+  
+  This pattern, and the next four, have a C<subs> method as well, which
+  will transform a matching MAC address into so called canonical format.
+  Canonical format means that every component of the address will be
+  exactly two hexadecimals (with a leading zero if necessary), and the
+  components will be separated by a colon.
+  
+  The C<subs> method will not work for binary MAC addresses if the
+  Perl version predates 5.6.0.
+  
+  =head2 C<$RE{net}{MAC}{dec}{-sep}>
+  
+  Returns a pattern that matches a valid MAC address as colon separated
+  decimals.
+  
+  If C<< -sep=I<P> >> is specified the pattern I<P> is used as the separator.
+  By default I<P> is C<qr/:/>. 
+  
+  =head2 C<$RE{net}{MAC}{hex}{-sep}>
+  
+  Returns a pattern that matches a valid MAC address as colon separated
+  hexadecimals, with the letters C<a> to C<f> in lower case.
+  
+  If C<< -sep=I<P> >> is specified the pattern I<P> is used as the separator.
+  By default I<P> is C<qr/:/>.
+  
+  =head2 C<$RE{net}{MAC}{oct}{-sep}>
+  
+  Returns a pattern that matches a valid MAC address as colon separated
+  octals.
+  
+  If C<< -sep=I<P> >> is specified the pattern I<P> is used as the separator.
+  By default I<P> is C<qr/:/>.
+  
+  =head2 C<$RE{net}{MAC}{bin}{-sep}>
+  
+  Returns a pattern that matches a valid MAC address as colon separated
+  binary numbers.
+  
+  If C<< -sep=I<P> >> is specified the pattern I<P> is used as the separator.
+  By default I<P> is C<qr/:/>.
+  
+  =head2 $RE{net}{domain}
+  
+  Returns a pattern to match domains (and hosts) as defined in RFC 1035.
+  Under I{-keep} only the entire domain name is returned.
+  
+  RFC 1035 says that a single space can be a domainname too. So, the
+  pattern returned by C<$RE{net}{domain}> recognizes a single space
+  as well. This is not always what people want. If you want to recognize
+  domainnames, but not a space, you can do one of two things, either use
+  
+      /(?! )$RE{net}{domain}/
+  
+  or use the C<{-nospace}> option (without an argument).
+  
+  =head1 REFERENCES
+  
+  =over 4
+  
+  =item B<RFC 1035>
+  
+  Mockapetris, P.: I<DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION>.
+  November 1987.
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common> for a general description of how to use this interface.
+  
+  =head1 AUTHOR
+  
+  Damian Conway I<damian@conway.org>.
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  For a start, there are many common regexes missing.
+  Send them in to I<regexp-common@abigail.be>.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_NET
+
+$fatpacked{"Regexp/Common/number.pm"} = <<'REGEXP_COMMON_NUMBER';
+  package Regexp::Common::number;
+  
+  use Config;
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  sub _croak {
+      require Carp;
+      goto &Carp::croak;
+  }
+  
+  my $digits = join ("", 0 .. 9, "A" .. "Z");
+  
+  sub int_creator {
+      my $flags = $_ [1];
+      my ($sep, $group, $base, $places) =
+              @{$flags} {qw /-sep -group -base -places/};
+  
+      # Deal with the bases.
+      _croak "Base must be between 1 and 36" unless $base >=  1 &&
+                                                    $base <= 36;
+      my $chars = substr $digits, 0, $base;
+  
+      $sep = ',' if exists $flags -> {-sep} && !defined $flags -> {-sep};
+  
+      my $max = $group;
+         $max = $2 if $group =~ /^\s*(\d+)\s*,\s*(\d+)\s*$/;
+  
+      my $quant = $places ? "{$places}" : "+";
+  
+      return $sep ? qq {(?k:(?k:[+-]?)(?k:[$chars]{1,$max}} .
+                    qq {(?:$sep} . qq {[$chars]{$group})*))}
+                  : qq {(?k:(?k:[+-]?)(?k:[$chars]$quant))}
+  }
+  
+  sub real_creator { 
+      my ($base, $places, $radix, $sep, $group, $expon) =
+              @{$_[1]}{-base, -places, -radix, -sep, -group, -expon};
+      _croak "Base must be between 1 and 36"
+             unless $base >= 1 && $base <= 36;
+      $sep = ',' if exists $_[1]->{-sep}
+                 && !defined $_[1]->{-sep};
+      if ($base > 14 && $expon =~ /^[Ee]$/) {$expon = 'G'}
+      foreach ($radix, $sep, $expon) {$_ = "[$_]" if 1 == length}
+      my $chars = substr $digits, 0, $base;
+      return $sep
+             ? qq {(?k:(?i)(?k:[+-]?)(?k:(?=[$chars]|$radix)}              .
+               qq {(?k:[$chars]{1,$group}(?:(?:$sep)[$chars]{$group})*)}  .
+               qq {(?:(?k:$radix)(?k:[$chars]{$places}))?)}                .
+               qq {(?:(?k:$expon)(?k:(?k:[+-]?)(?k:[$chars]+))|))}
+             : qq {(?k:(?i)(?k:[+-]?)(?k:(?=[$chars]|$radix)}              .
+               qq {(?k:[$chars]*)(?:(?k:$radix)(?k:[$chars]{$places}))?)} .
+               qq {(?:(?k:$expon)(?k:(?k:[+-]?)(?k:[$chars]+))|))};
+  }
+  sub decimal_creator { 
+      my ($base, $places, $radix, $sep, $group) =
+              @{$_[1]}{-base, -places, -radix, -sep, -group};
+      _croak "Base must be between 1 and 36"
+             unless $base >= 1 && $base <= 36;
+      $sep = ',' if exists $_[1]->{-sep}
+                 && !defined $_[1]->{-sep};
+      foreach ($radix, $sep) {$_ = "[$_]" if 1 == length}
+      my $chars = substr $digits, 0, $base;
+      return $sep
+             ? qq {(?k:(?i)(?k:[+-]?)(?k:(?=[$chars]|$radix)}               .
+               qq {(?k:[$chars]{1,$group}(?:(?:$sep)[$chars]{$group})*)}   .
+               qq {(?:(?k:$radix)(?k:[$chars]{$places}))?))}
+             : qq {(?k:(?i)(?k:[+-]?)(?k:(?=[$chars]|$radix)}               .
+               qq {(?k:[$chars]*)(?:(?k:$radix)(?k:[$chars]{$places}))?))}
+  }
+  
+  
+  pattern name   => [qw (num int -sep= -base=10 -group=3)],
+          create => \&int_creator,
+          ;
+  
+  pattern name   => [qw (num real -base=10), '-places=0,',
+                     qw (-radix=[.] -sep= -group=3 -expon=E)],
+          create => \&real_creator,
+          ;
+  
+  pattern name   => [qw (num decimal -base=10), '-places=0,',
+                     qw (-radix=[.] -sep= -group=3)],
+          create => \&decimal_creator,
+          ;
+  
+  sub real_synonym {
+      my ($name, $base) = @_;
+      pattern name   => ['num', $name, '-places=0,', '-radix=[.]',
+                         '-sep=', '-group=3', '-expon=E'],
+              create => sub {my %flags = (%{$_[1]}, -base => $base);
+                             real_creator (undef, \%flags);
+                        }
+              ;
+  }
+  
+  
+  real_synonym (hex => 16);
+  real_synonym (dec => 10);
+  real_synonym (oct =>  8);
+  real_synonym (bin =>  2);
+  
+  
+  # 2147483647
+  pattern name    => [qw (num square)],
+          create  => sub {
+              use re 'eval';
+              my $sixty_four_bits = $Config {use64bitint};
+              #
+              # CPAN testers claim it fails on 5.8.8 and darwin 9.0.
+              #
+              $sixty_four_bits = 0 if $Config {osname} eq 'darwin' &&
+                                      $Config {osvers} eq '9.0'    &&
+                                      $] == 5.008008;
+              my $num = $sixty_four_bits ? '0*[1-8]?[0-9]{1,15}' :
+                       '0*(?:2(?:[0-0][0-9]{8}' .
+                           '|1(?:[0-3][0-9]{7}' .
+                           '|4(?:[0-6][0-9]{6}' .
+                           '|7(?:[0-3][0-9]{5}' .
+                           '|4(?:[0-7][0-9]{4}' .
+                           '|8(?:[0-2][0-9]{3}' .
+                           '|3(?:[0-5][0-9]{2}' .
+                           '|6(?:[0-3][0-9]{1}' .
+                           '|4[0-7])))))))))|1?[0-9]{1,9}';
+              qr {($num)(?(?{sqrt ($^N) == int sqrt ($^N)})|(?!))}
+          },
+          version => 5.008;
+          ;
+  
+  pattern name    => [qw (num roman)],
+          create  => '(?xi)(?=[MDCLXVI])
+                           (?k:M{0,3}
+                              (D?C{0,3}|CD|CM)?
+                              (L?X{0,3}|XL|XC)?
+                              (V?I{0,3}|IV|IX)?)'
+          ;
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::number -- provide regexes for numbers
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /number/;
+  
+      while (<>) {
+          /^$RE{num}{int}$/                and  print "Integer\n";
+          /^$RE{num}{real}$/               and  print "Real\n";
+          /^$RE{num}{real}{-base => 16}$/  and  print "Hexadecimal real\n";
+      }
+  
+  
+  =head1 DESCRIPTION
+  
+  Please consult the manual of L<Regexp::Common> for a general description
+  of the works of this interface.
+  
+  Do not use this module directly, but load it via I<Regexp::Common>.
+  
+  =head2 C<$RE{num}{int}{-base}{-sep}{-group}{-places}>
+  
+  Returns a pattern that matches an integer.
+  
+  If C<< -base => I<B> >> is specified, the integer is in base I<B>, with
+  C<< 2 <= I<B> <= 36 >>. For bases larger than 10, upper case letters
+  are used. The default base is 10.
+  
+  If C<< -sep => I<P> >> is specified, the pattern I<P> is required as a
+  grouping marker within the number. If this option is not given, no
+  grouping marker is used.
+  
+  If C<< -group => I<N> >> is specified, digits between grouping markers
+  must be grouped in sequences of exactly I<N> digits. The default value
+  of I<N> is 3.  If C<< -group => I<N,M> >> is specified, digits between
+  grouping markers must be grouped in sequences of at least I<N> digits,
+  and at most I<M> digits. This option is ignored unless the C<< -sep >>
+  option is used.
+  
+  If C<< -places => I<N> >> is specified, the integer recognized must be
+  exactly I<N> digits wide. If C<< -places => I<N,M> >> is specified, the
+  integer must be at least I<N> wide, and at most I<M> characters. There
+  is no default, which means that integers are unlimited in size. This
+  option is ignored if the C<< -sep >> option is used.
+  
+  For example:
+  
+   $RE{num}{int}                          # match 1234567
+   $RE{num}{int}{-sep=>','}               # match 1,234,567
+   $RE{num}{int}{-sep=>',?'}              # match 1234567 or 1,234,567
+   $RE{num}{int}{-sep=>'.'}{-group=>4}    # match 1.2345.6789
+  
+  Under C<-keep> (see L<Regexp::Common>):
+  
+  =over 4
+  
+  =item $1
+  
+  captures the entire number
+  
+  =item $2
+  
+  captures the optional sign of the number
+  
+  =item $3
+  
+  captures the complete set of digits
+  
+  =back
+  
+  =head2 C<$RE{num}{real}{-base}{-radix}{-places}{-sep}{-group}{-expon}>
+  
+  Returns a pattern that matches a floating-point number.
+  
+  If C<-base=I<N>> is specified, the number is assumed to be in that base
+  (with A..Z representing the digits for 11..36). By default, the base is 10.
+  
+  If C<-radix=I<P>> is specified, the pattern I<P> is used as the radix point for
+  the number (i.e. the "decimal point" in base 10). The default is C<qr/[.]/>.
+  
+  If C<-places=I<N>> is specified, the number is assumed to have exactly
+  I<N> places after the radix point.
+  If C<-places=I<M,N>> is specified, the number is assumed to have between
+  I<M> and I<N> places after the radix point.
+  By default, the number of places is unrestricted.
+  
+  If C<-sep=I<P>> specified, the pattern I<P> is required as a grouping marker
+  within the pre-radix section of the number. By default, no separator is
+  allowed.
+  
+  If C<-group=I<N>> is specified, digits between grouping separators
+  must be grouped in sequences of exactly I<N> characters. The default value of
+  I<N> is 3.
+  
+  If C<-expon=I<P>> is specified, the pattern I<P> is used as the exponential
+  marker.  The default value of I<P> is C<qr/[Ee]/>.
+  
+  For example:
+  
+   $RE{num}{real}                  # matches 123.456 or -0.1234567
+   $RE{num}{real}{-places=>2}      # matches 123.45 or -0.12
+   $RE{num}{real}{-places=>'0,3'}  # matches 123.456 or 0 or 9.8
+   $RE{num}{real}{-sep=>'[,.]?'}   # matches 123,456 or 123.456
+   $RE{num}{real}{-base=>3'}       # matches 121.102
+  
+  Under C<-keep>:
+  
+  =over 4
+  
+  =item $1
+  
+  captures the entire match
+  
+  =item $2
+  
+  captures the optional sign of the number
+  
+  =item $3
+  
+  captures the complete mantissa
+  
+  =item $4
+  
+  captures the whole number portion of the mantissa
+  
+  =item $5
+  
+  captures the radix point
+  
+  =item $6
+  
+  captures the fractional portion of the mantissa
+  
+  =item $7
+  
+  captures the optional exponent marker
+  
+  =item $8
+  
+  captures the entire exponent value
+  
+  =item $9
+  
+  captures the optional sign of the exponent
+  
+  =item $10
+  
+  captures the digits of the exponent
+  
+  =back
+  
+  =head2 C<$RE{num}{dec}{-radix}{-places}{-sep}{-group}{-expon}>
+  
+  A synonym for C<< $RE{num}{real}{-base=>10}{...} >>
+  
+  =head2 C<$RE{num}{oct}{-radix}{-places}{-sep}{-group}{-expon}>
+  
+  A synonym for C<< $RE{num}{real}{-base=>8}{...} >>
+  
+  =head2 C<$RE{num}{bin}{-radix}{-places}{-sep}{-group}{-expon}>
+  
+  A synonym for C<< $RE{num}{real}{-base=>2}{...} >>
+  
+  =head2 C<$RE{num}{hex}{-radix}{-places}{-sep}{-group}{-expon}>
+  
+  A synonym for C<< $RE{num}{real}{-base=>16}{...} >>
+  
+  =head2 C<$RE{num}{decimal}{-base}{-radix}{-places}{-sep}{-group}>
+  
+  The same as C<$RE{num}{real}>, except that an exponent isn't allowed.
+  Hence, this returns a pattern matching I<decimal> numbers.
+  
+  If C<-base=I<N>> is specified, the number is assumed to be in that base
+  (with A..Z representing the digits for 11..36). By default, the base is 10.
+  
+  If C<-radix=I<P>> is specified, the pattern I<P> is used as the radix point for
+  the number (i.e. the "decimal point" in base 10). The default is C<qr/[.]/>.
+  
+  If C<-places=I<N>> is specified, the number is assumed to have exactly
+  I<N> places after the radix point.
+  If C<-places=I<M,N>> is specified, the number is assumed to have between
+  I<M> and I<N> places after the radix point.
+  By default, the number of places is unrestricted.
+  
+  If C<-sep=I<P>> specified, the pattern I<P> is required as a grouping marker
+  within the pre-radix section of the number. By default, no separator is
+  allowed.
+  
+  If C<-group=I<N>> is specified, digits between grouping separators
+  must be grouped in sequences of exactly I<N> characters. The default value of
+  I<N> is 3.
+  
+  For example:
+  
+   $RE{num}{decimal}                  # matches 123.456 or -0.1234567
+   $RE{num}{decimal}{-places=>2}      # matches 123.45 or -0.12
+   $RE{num}{decimal}{-places=>'0,3'}  # matches 123.456 or 0 or 9.8
+   $RE{num}{decimal}{-sep=>'[,.]?'}   # matches 123,456 or 123.456
+   $RE{num}{decimal}{-base=>3'}       # matches 121.102
+  
+  Under C<-keep>:
+  
+  =over 4
+  
+  =item $1
+  
+  captures the entire match
+  
+  =item $2
+  
+  captures the optional sign of the number
+  
+  =item $3
+  
+  captures the complete mantissa
+  
+  =item $4
+  
+  captures the whole number portion of the mantissa
+  
+  =item $5
+  
+  captures the radix point
+  
+  =item $6
+  
+  captures the fractional portion of the mantissa
+  
+  =back
+  
+  =head2 C<$RE{num}{square}>
+  
+  Returns a pattern that matches a (decimal) square. Because Perl's
+  arithmetic is lossy when using integers over about 53 bits, this pattern
+  only recognizes numbers less than 9000000000000000, if one uses a
+  Perl that is configured to use 64 bit integers. Otherwise, the limit
+  is 2147483647. These restrictions were introduced in versions 2.116
+  and 2.117 of Regexp::Common. Regardless whether C<-keep> was set,
+  the matched number will be returned in C<$1>.
+  
+  This pattern is available for version 5.008 and up.
+  
+  =head2 C<$RE{num}{roman}>
+  
+  Returns a pattern that matches an integer written in Roman numbers.
+  Case doesn't matter. Only the more modern style, that is, no more
+  than three repetitions of a letter, is recognized. The largest number
+  matched is I<MMMCMXCIX>, or 3999. Larger numbers cannot be expressed
+  using ASCII characters. A future version will be able to deal with 
+  the Unicode symbols to match larger Roman numbers.
+  
+  Under C<-keep>, the number will be captured in $1.
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common> for a general description of how to use this interface.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  For a start, there are many common regexes missing.
+  Send them in to I<regexp-common@abigail.be>.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_NUMBER
+
+$fatpacked{"Regexp/Common/profanity.pm"} = <<'REGEXP_COMMON_PROFANITY';
+  package Regexp::Common::profanity;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  my $profanity = '(?:cvff(?:\\ gnxr|\\-gnxr|gnxr|r(?:ef|[feq])|vat|l)?|dhvzf?|fuvg(?:g(?:r(?:ef|[qe])|vat|l)|r(?:ef|[fqel])|vat|[fr])?|g(?:heqf?|jngf?)|jnax(?:r(?:ef|[eq])|vat|f)?|n(?:ef(?:r(?:\\ ubyr|\\-ubyr|ubyr|[fq])|vat|r)|ff(?:\\ ubyrf?|\\-ubyrf?|rq|ubyrf?|vat))|o(?:hyy(?:\\ fuvg(?:g(?:r(?:ef|[qe])|vat)|f)?|\\-fuvg(?:g(?:r(?:ef|[qe])|vat)|f)?|fuvg(?:g(?:r(?:ef|[qe])|vat)|f)?)|ybj(?:\\ wbof?|\\-wbof?|wbof?))|p(?:bpx(?:\\ fhpx(?:ref?|vat)|\\-fhpx(?:ref?|vat)|fhpx(?:ref?|vat))|enc(?:c(?:r(?:ef|[eq])|vat|l)|f)?|h(?:agf?|z(?:vat|zvat|f)))|qvpx(?:\\ urnq|\\-urnq|rq|urnq|vat|yrff|f)|s(?:hpx(?:rq|vat|f)?|neg(?:r[eq]|vat|[fl])?|rygpu(?:r(?:ef|[efq])|vat)?)|un(?:eq[\\-\\ ]?ba|ys(?:\\ n[fe]|\\-n[fe]|n[fe])frq)|z(?:bgure(?:\\ shpx(?:ref?|vat)|\\-shpx(?:ref?|vat)|shpx(?:ref?|vat))|hgu(?:n(?:\\ shpx(?:ref?|vat|[nnn])|\\-shpx(?:ref?|vat|[nnn])|shpx(?:ref?|vat|[nnn]))|re(?:\\ shpx(?:ref?|vat)|\\-shpx(?:ref?|vat)|shpx(?:ref?|vat)))|reqr?))';
+  
+  my $contextual = '(?:c(?:bex|e(?:bax|vpxf?)|hff(?:vrf|l)|vff(?:\\ gnxr|\\-gnxr|gnxr|r(?:ef|[feq])|vat|l)?)|dhvzf?|ebbg(?:r(?:ef|[eq])|vat|f)?|f(?:bq(?:q(?:rq|vat)|f)?|chax|perj(?:rq|vat|f)?|u(?:nt(?:t(?:r(?:ef|[qe])|vat)|f)?|vg(?:g(?:r(?:ef|[qe])|vat|l)|r(?:ef|[fqel])|vat|[fr])?))|g(?:heqf?|jngf?|vgf?)|jnax(?:r(?:ef|[eq])|vat|f)?|n(?:ef(?:r(?:\\ ubyr|\\-ubyr|ubyr|[fq])|vat|r)|ff(?:\\ ubyrf?|\\-ubyrf?|rq|ubyrf?|vat))|o(?:ba(?:r(?:ef|[fe])|vat|r)|h(?:ttre|yy(?:\\ fuvg(?:g(?:r(?:ef|[qe])|vat)|f)?|\\-fuvg(?:g(?:r(?:ef|[qe])|vat)|f)?|fuvg(?:g(?:r(?:ef|[qe])|vat)|f)?))|n(?:fgneq|yy(?:r(?:ef|[qe])|vat|f)?)|yb(?:bql|j(?:\\ wbof?|\\-wbof?|wbof?)))|p(?:bpx(?:\\ fhpx(?:ref?|vat)|\\-fhpx(?:ref?|vat)|fhpx(?:ref?|vat)|f)?|enc(?:c(?:r(?:ef|[eq])|vat|l)|f)?|h(?:agf?|z(?:vat|zvat|f)))|q(?:batf?|vpx(?:\\ urnq|\\-urnq|rq|urnq|vat|yrff|f)?)|s(?:hpx(?:rq|vat|f)?|neg(?:r[eq]|vat|[fl])?|rygpu(?:r(?:ef|[efq])|vat)?)|u(?:hzc(?:r(?:ef|[eq])|vat|f)?|n(?:eq[\\-\\ ]?ba|ys(?:\\ n[fe]|\\-n[fe]|n[fe])frq))|z(?:bgure(?:\\ shpx(?:ref?|vat)|\\-shpx(?:ref?|vat)|shpx(?:ref?|vat))|hgu(?:n(?:\\ shpx(?:ref?|vat|[nnn])|\\-shpx(?:ref?|vat|[nnn])|shpx(?:ref?|vat|[nnn]))|re(?:\\ shpx(?:ref?|vat)|\\-shpx(?:ref?|vat)|shpx(?:ref?|vat)))|reqr?))';
+  
+  tr/A-Za-z/N-ZA-Mn-za-m/ foreach $profanity, $contextual;
+  
+  pattern name   => [qw (profanity)],
+          create => '(?:\b(?k:' . $profanity . ')\b)',
+          ;
+  
+  pattern name   => [qw (profanity contextual)],
+          create => '(?:\b(?k:' . $contextual . ')\b)',
+          ;
+  
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::profanity -- provide regexes for profanity
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /profanity/;
+  
+      while (<>) {
+          /$RE{profanity}/               and  print "Contains profanity\n";
+      }
+  
+  
+  =head1 DESCRIPTION
+  
+  Please consult the manual of L<Regexp::Common> for a general description
+  of the works of this interface.
+  
+  Do not use this module directly, but load it via I<Regexp::Common>.
+  
+  =head2 $RE{profanity}
+  
+  Returns a pattern matching words -- such as Carlin's "big seven" -- that
+  are most likely to give offense. Note that correct anatomical terms are
+  deliberately I<not> included in the list.
+  
+  Under C<-keep> (see L<Regexp::Common>):
+  
+  =over 4
+  
+  =item $1
+  
+  captures the entire word
+  
+  =back
+  
+  =head2 C<$RE{profanity}{contextual}>
+  
+  Returns a pattern matching words that are likely to give offense when
+  used in specific contexts, but which also have genuinely
+  non-offensive meanings.
+  
+  Under C<-keep> (see L<Regexp::Common>):
+  
+  =over 4
+  
+  =item $1
+  
+  captures the entire word
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common> for a general description of how to use this interface.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  For a start, there are many common regexes missing.
+  Send them in to I<regexp-common@abigail.be>.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_PROFANITY
+
+$fatpacked{"Regexp/Common/whitespace.pm"} = <<'REGEXP_COMMON_WHITESPACE';
+  package Regexp::Common::whitespace;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  pattern name   => [qw (ws crop)],
+          create => '(?:^\s+|\s+$)',
+          subs   => sub {$_[1] =~ s/^\s+//; $_[1] =~ s/\s+$//;}
+          ;
+  
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::whitespace -- provides a regex for leading or
+  trailing whitescape
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /whitespace/;
+  
+      while (<>) {
+          s/$RE{ws}{crop}//g;           # Delete surrounding whitespace
+      }
+  
+  
+  =head1 DESCRIPTION
+  
+  Please consult the manual of L<Regexp::Common> for a general description
+  of the works of this interface.
+  
+  Do not use this module directly, but load it via I<Regexp::Common>.
+  
+  
+  =head2 C<$RE{ws}{crop}>
+  
+  Returns a pattern that identifies leading or trailing whitespace.
+  
+  For example:
+  
+          $str =~ s/$RE{ws}{crop}//g;     # Delete surrounding whitespace
+  
+  The call:
+  
+          $RE{ws}{crop}->subs($str);
+  
+  is optimized (but probably still slower than doing the s///g explicitly).
+  
+  This pattern does not capture under C<-keep>.
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common> for a general description of how to use this interface.
+  
+  =head1 AUTHOR
+  
+  Damian Conway (damian@conway.org)
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Bound to be plenty.
+  
+  For a start, there are many common regexes missing.
+  Send them in to I<regexp-common@abigail.be>.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_WHITESPACE
+
+$fatpacked{"Regexp/Common/zip.pm"} = <<'REGEXP_COMMON_ZIP';
+  package Regexp::Common::zip;
+  
+  use Regexp::Common qw /pattern clean no_defaults/;
+  
+  use strict;
+  use warnings;
+  
+  use vars qw /$VERSION/;
+  $VERSION = '2010010201';
+  
+  
+  #
+  # Prefer '[0-9]' over \d, because the latter may include more
+  # in Unicode string.
+  #
+  
+  my %code = (
+      Australia         =>  [qw /AUS? AU AUS/],
+      Belgium           =>  [qw /BE?  BE B/],
+      Denmark           =>  [qw /DK   DK DK/],
+      France            =>  [qw /FR?  FR F/],
+      Germany           =>  [qw /DE?  DE D/],
+      Greenland         =>  [qw /DK   DK DK/],
+      Italy             =>  [qw /IT?  IT I/],
+      Netherlands       =>  [qw /NL   NL NL/],
+      Norway            =>  [qw /NO?  NO N/],
+      Spain             =>  [qw /ES?  ES E/],
+      USA               =>  [qw /USA? US USA/],
+  );
+  
+  # Returns the empty string if the argument is undefined, the argument otherwise.
+  sub __ {defined $_ [0] ? $_ [0] : ""}
+  
+  # Used for allowable options. If the value starts with 'y', the option is
+  # required ("{1,1}" is returned, if the value starts with 'n', the option
+  # is disallowed ("{0,0}" is returned), otherwise, the option is allowed,
+  # but not required ("{0,1}" is returned).
+  sub _t {
+      if (defined $_ [0]) {
+          if ($_ [0] =~ /^y/i) {return "{1,1}"}
+          if ($_ [0] =~ /^n/i) {return "{0,0}"}
+      }
+      "{0,1}"
+  }
+  
+  # Returns the (sub)pattern for the country named '$name', and the 
+  # -country option '$country'.
+  sub _c {
+      my ($name, $country) = @_;
+      if (defined $country && $country ne "") {
+          if ($country eq 'iso')  {return $code {$name} [1]}
+          if ($country eq 'cept') {return $code {$name} [2]}
+          return $country;
+      }
+      $code {$name} [0]
+  }
+  
+  
+  my %zip = (
+      Australia   =>  "(?k:(?k:[1-8][0-9]|9[0-7]|0?[28]|0?9(?=09))(?k:[0-9]{2}))",
+                      # Postal codes of the form 'DDDD', with the first
+                      # two digits 02, 08 or 20-97. Leading 0 may be omitted.
+                      # 909 and 0909 are valid as well - but no other postal
+                      # codes starting with 9 or 09.
+  
+      Belgium     =>  "(?k:(?k:[1-9])(?k:[0-9]{3}))",
+                      # Postal codes of the form: 'DDDD', with the first
+                      # digit representing the province; the others
+                      # distribution sectors. Postal codes do not start
+                      # with a zero.
+  
+      Denmark     =>  "(?k:(?k:[1-9])(?k:[0-9])(?k:[0-9]{2}))",
+                      # Postal codes of the form: 'DDDD', with the first
+                      # digit representing the distribution region, the
+                      # second digit the distribution district. Postal
+                      # codes do not start with a zero. Postal codes 
+                      # starting with '39' are in Greenland.
+  
+      France      =>  "(?k:(?k:[0-8][0-9]|9[0-8])(?k:[0-9]{3}))",
+                      # Postal codes of the form: 'DDDDD'. All digits are used.
+                      # First two digits indicate the department, and range
+                      # from 01 to 98, or 00 for army.
+  
+      Germany     =>  "(?k:(?k:[0-9])(?k:[0-9])(?k:[0-9]{3}))",
+                      # Postal codes of the form: 'DDDDD'. All digits are used.
+                      # First digit is the distribution zone, second a
+                      # distribution region. Other digits indicate the
+                      # distribution district and postal town.
+  
+      Greenland   =>  "(?k:(?k:39)(?k:[0-9]{2}))",
+                      # Postal codes of Greenland are part of the Danish
+                      # system. Codes in Greenland start with 39.
+  
+      Italy       =>  "(?k:(?k:[0-9])(?k:[0-9])(?k:[0-9])(?k:[0-9])(?k:[0-9]))",
+                      # First digit: region.
+                      # Second digit: province.
+                      # Third digit: capital/province (odd for capital).
+                      # Fourth digit: route.
+                      # Fifth digit: place on route (0 for small places)
+  
+      Norway      =>  "(?k:[0-9]{4})",
+                      # Four digits, no significance (??).
+  
+      Spain       =>  "(?k:(?k:0[1-9]|[1-4][0-9]|5[0-2])(?k:[0-9])(?k:[0-9]{2}))",
+                      # Five digits, first two indicate the province.
+                      # Third digit: large town, main delivery rounds.
+                      # Last 2 digits: delivery area, secondary delivery route
+                      #                or link to rural areas.
+  
+      Switzerland =>  "(?k:[1-9][0-9]{3})",
+                      # Four digits, first is district, second is area,
+                      # third is route, fourth is post office number.
+  );
+  
+  my %alternatives = (
+      Australia    => [qw /Australian/],
+      France       => [qw /French/],
+      Germany      => [qw /German/],
+  );
+  
+  
+  while (my ($country, $zip) = each %zip) {
+      my @names = ($country);
+      push @names => @{$alternatives {$country}} if $alternatives {$country};
+      foreach my $name (@names) {
+          my $pat_name = $name eq "Denmark" && $] < 5.00503
+                         ?   [zip => $name, qw /-country=/]
+                         :   [zip => $name, qw /-prefix= -country=/];
+          pattern name    => $pat_name,
+                  create  => sub {
+                      my $pt  = _t $_ [1] {-prefix};
+  
+                      my $cn  = _c $country => $_ [1] {-country};
+                      my $pfx = "(?:(?k:$cn)-)";
+  
+                      "(?k:$pfx$pt$zip)";
+                  },
+                  ;
+      }
+  }
+  
+  
+  # Postal codes of the form 'DDDD LL', with F, I, O, Q, U and Y not
+  # used, SA, SD and SS unused combinations, and the first digit
+  # cannot be 0. No specific meaning to the letters or digits.
+  foreach my $country (qw /Netherlands Dutch/) {
+      pattern name   => ['zip', $country => qw /-prefix= -country=/, "-sep= "],
+              create => sub {
+                  my $pt  = _t $_ [1] {-prefix};
+  
+                  # Unused letters: F, I, O, Q, U, Y.
+                  # Unused combinations: SA, SD, SS.
+                  my $num =  '[1-9][0-9]{3}';
+                  my $let =  '[A-EGHJ-NPRTVWXZ][A-EGHJ-NPRSTVWXZ]|' .
+                             'S[BCEGHJ-NPRTVWXZ]';
+  
+                  my $sep = __ $_ [1] {-sep};
+                  my $cn  = _c Netherlands => $_ [1] {-country};
+                  my $pfx = "(?:(?k:$cn)-)";
+  
+                  "(?k:$pfx$pt(?k:(?k:$num)(?k:$sep)(?k:$let)))";
+              },
+              ;
+  }
+  
+  
+  # Postal codes of the form 'DDDDD' or 'DDDDD-DDDD'. All digits are used,
+  # none carry any specific meaning.
+  pattern name    => [qw /zip US -prefix= -country= -extended= -sep=-/],
+          create  => sub {
+              my $pt  = _t $_ [1] {-prefix};
+              my $et  = _t $_ [1] {-extended};
+  
+              my $sep = __ $_ [1] {-sep};
+  
+              my $cn  = _c USA => $_ [1] {-country};
+              my $pfx = "(?:(?k:$cn)-)";
+              # my $zip = "(?k:[0-9]{5})";
+              # my $ext = "(?:(?k:$sep)(?k:[0-9]{4}))";
+              my $zip = "(?k:(?k:[0-9]{3})(?k:[0-9]{2}))";
+              my $ext = "(?:(?k:$sep)(?k:(?k:[0-9]{2})(?k:[0-9]{2})))";
+  
+              "(?k:$pfx$pt(?k:$zip$ext$et))";
+          },
+          version => 5.00503,
+          ;
+  
+  
+  # pattern name   => [qw /zip British/, "-sep= "],
+  #         create => sub {
+  #             my $sep     = $_ [1] -> {-sep};
+  # 
+  #             my $london  = '(?:EC[1-4]|WC[12]|S?W1)[A-Z]';
+  #             my $single  = '[BGLMS][0-9]{1,2}';
+  #             my $double  = '[A-Z]{2}[0-9]{1,2}';
+  # 
+  #             my $left    = "(?:$london|$single|$double)";
+  #             my $right   = '[0-9][ABD-HJLNP-UW-Z]{2}';
+  # 
+  #             "(?k:(?k:$left)(?k:$sep)(?k:$right))";
+  #         },
+  #         ;
+  # 
+  # pattern name   => [qw /zip Canadian/, "-sep= "],
+  #         create => sub {
+  #             my $sep     = $_ [1] -> {-sep};
+  # 
+  #             my $left    = '[A-Z][0-9][A-Z]';
+  #             my $right   = '[0-9][A-Z][0-9]';
+  # 
+  #             "(?k:(?k:$left)(?k:$sep)(?k:$right))";
+  #         },
+  #         ;
+  
+  
+  1;
+  
+  __END__
+  
+  =pod
+  
+  =head1 NAME
+  
+  Regexp::Common::zip -- provide regexes for postal codes.
+  
+  =head1 SYNOPSIS
+  
+      use Regexp::Common qw /zip/;
+  
+      while (<>) {
+          /^$RE{zip}{Netherlands}$/   and  print "Dutch postal code\n";
+      }
+  
+  
+  =head1 DESCRIPTION
+  
+  Please consult the manual of L<Regexp::Common> for a general description
+  of the works of this interface.
+  
+  Do not use this module directly, but load it via I<Regexp::Common>.
+  
+  This module offers patterns for zip or postal codes of many different
+  countries. They all have the form C<$RE{zip}{Country}[{options}]>.
+  
+  The following common options are used:
+  
+  =head2 C<{-prefix=[yes|no|allow]}> and C<{-country=PAT}>.
+  
+  Postal codes can be prefixed with a country abbreviation. That is,
+  a dutch postal code of B<1234 AB> can also be written as B<NL-1234 AB>.
+  By default, all the patterns will allow the prefixes. But this can be
+  changed with the C<-prefix> option. With C<-prefix=yes>, the returned
+  pattern requires a country prefix, while C<-prefix=no> disallows a
+  prefix. Any argument that doesn't start with a C<y> or a C<n> allows a
+  country prefix, but doesn't require them.
+  
+  The prefixes used are, unfortunally, not always the same. Officially,
+  ISO country codes need to be used, but the usage of I<CEPT> codes (the
+  same ones as used on cars) is common too. By default, each postal code
+  will recognize a country prefix that's either the ISO standard or the
+  CEPT code. That is, German postal codes may prefixed with either C<DE>
+  or C<D>. The recognized prefix can be changed with the C<-country>
+  option, which takes a (sub)pattern as argument. The arguments C<iso>
+  and C<cept> are special, and indicate the language prefix should be the
+  ISO country code, or the CEPT code.
+  
+  Examples:
+   /$RE{zip}{Netherlands}/;
+             # Matches '1234 AB' and 'NL-1234 AB'.
+   /$RE{zip}{Netherlands}{-prefix => 'no'}/;
+             # Matches '1234 AB' but not 'NL-1234 AB'.
+   /$RE{zip}{Netherlands}{-prefix => 'yes'}/;
+             # Matches 'NL-1234 AB' but not '1234 AB'.
+  
+   /$RE{zip}{Germany}/;
+             # Matches 'DE-12345' and 'D-12345'.
+   /$RE{zip}{Germany}{-country => 'iso'}/; 
+             # Matches 'DE-12345' but not 'D-12345'.
+   /$RE{zip}{Germany}{-country => 'cept'}/;
+             # Matches 'D-12345' but not 'DE-12345'.
+   /$RE{zip}{Germany}{-country => 'GER'}/;
+             # Matches 'GER-12345'.
+  
+  =head2 C<{-sep=PAT}>
+  
+  Some countries have postal codes that consist of two parts. Typically
+  there is an official way of separating those parts; but in practise
+  people tend to use different separators. For instance, if the official
+  way to separate parts is to use a space, it happens that the space is
+  left off. The C<-sep> option can be given a pattern as argument which
+  indicates what to use as a separator between the parts.
+  
+  Examples:
+   /$RE{zip}{Netherlands}/;
+             # Matches '1234 AB' but not '1234AB'.
+   /$RE{zip}{Netherlands}{-sep => '\s*'}/;
+             # Matches '1234 AB' and '1234AB'.
+  
+  =head2 C<$RE{zip}{Australia}>
+  
+  Returns a pattern that recognizes Australian postal codes. Australian
+  postal codes consist of four digits; the first two digits, which range
+  from '10' to '97', indicate the state. Territories use '02' or '08'
+  as starting digits; the leading zero is optional. '0909' is the only 
+  postal code starting with '09' (the leading zero is optional here as
+  well) - this is the postal code for the Nothern Territory University).
+  The (optional) country
+  prefixes are I<AU> (ISO country code) and I<AUS> (CEPT code).
+  Regexp::Common 2.107 and before used C<$RE{zip}{Australia}>. This is
+  still supported.
+  
+  If C<{-keep}> is used, the following variables will be set:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire postal code.
+  
+  =item $2
+  
+  The country code prefix.
+  
+  =item $3
+  
+  The postal code without the country prefix.
+  
+  =item $4
+  
+  The state or territory.
+  
+  =item $5
+  
+  The last two digits.
+  
+  =back
+  
+  =head2 C<$RE{zip}{Belgium}>
+  
+  Returns a pattern than recognizes Belgian postal codes. Belgian postal
+  codes consist of 4 digits, of which the first indicates the province.
+  The (optional) country prefixes are I<BE> (ISO country code) and
+  I<B> (CEPT code).
+  
+  If C<{-keep}> is used, the following variables will be set:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire postal code.
+  
+  =item $2
+  
+  The country code prefix.
+  
+  =item $3
+  
+  The postal code without the country prefix.
+  
+  =item $4
+  
+  The digit indicating the province.
+  
+  =item $5
+  
+  The last three digits of the postal code.
+  
+  =back
+  
+  
+  =head2 C<$RE{zip}{Denmark}>
+  
+  Returns a pattern that recognizes Danish postal codes. Danish postal
+  codes consist of four numbers; the first digit (which cannot be 0),
+  indicates the distribution region, the second the distribution
+  district. The (optional) country prefix is I<DK>, which is both
+  the ISO country code and the CEPT code.
+  
+  If C<{-keep}> is used, the following variables will be set:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire postal code.
+  
+  =item $2
+  
+  The country code prefix.
+  
+  =item $3
+  
+  The postal code without the country prefix.
+  
+  =item $4
+  
+  The digit indicating the distribution region.
+  
+  =item $5
+  
+  The digit indicating the distribution district.
+  
+  =item $6
+  
+  The last two digits of the postal code.
+  
+  =back
+  
+  
+  =head2 C<$RE{zip}{France}>
+  
+  Returns a pattern that recognizes French postal codes. French postal
+  codes consist of five numbers; the first two numbers, which range
+  from '01' to '98', indicate the department. The (optional) country
+  prefixes are I<FR> (ISO country code) and I<F> (CEPT code).
+  Regexp::Common 2.107 and before used C<$RE{zip}{French}>. This is
+  still supported.
+  
+  If C<{-keep}> is used, the following variables will be set:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire postal code.
+  
+  =item $2
+  
+  The country code prefix.
+  
+  =item $3
+  
+  The postal code without the country prefix.
+  
+  =item $4
+  
+  The department.
+  
+  =item $5
+  
+  The last three digits.
+  
+  =back
+  
+  =head2 C<$RE{zip}{Germany}>
+  
+  Returns a pattern that recognizes German postal codes. German postal
+  codes consist of five numbers; the first number indicating the
+  distribution zone, the second the distribution region, while the 
+  latter three indicate the distribution district and the postal town.
+  The (optional) country prefixes are I<DE> (ISO country code) and
+  I<D> (CEPT code).
+  Regexp::Common 2.107 and before used C<$RE{zip}{German}>. This is
+  still supported.
+  
+  If C<{-keep}> is used, the following variables will be set:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire postal code.
+  
+  =item $2
+  
+  The country code prefix.
+  
+  =item $3
+  
+  The postal code without the country prefix.
+  
+  =item $4
+  
+  The distribution zone.
+  
+  =item $5
+  
+  The distribution region.
+  
+  =item $6
+  
+  The distribution district and postal town.
+  
+  =back
+  
+  
+  =head2 C<$RE{zip}{Greenland}>
+  
+  Returns a pattern that recognizes postal codes from Greenland.
+  Greenland, being part of Denmark, uses Danish postal codes.
+  All postal codes of Greenland start with 39.
+  The (optional) country prefix is I<DK>, which is both
+  the ISO country code and the CEPT code.
+  
+  If C<{-keep}> is used, the following variables will be set:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire postal code.
+  
+  =item $2
+  
+  The country code prefix.
+  
+  =item $3
+  
+  The postal code without the country prefix.
+  
+  =item $4
+  
+  39, being the distribution region and distribution district for Greenland.
+  
+  =item $5
+  
+  The last two digits of the postal code.
+  
+  =back
+  
+  =head2 C<$RE{zip}{Italy}>
+  
+  Returns a pattern recognizing Italian postal codes. Italian postal
+  codes consist of 5 digits. The first digit indicates the region, the
+  second the province. The third digit is odd for province capitals,
+  and even for the province itself. The fourth digit indicates the
+  route, and the fifth a place on the route (0 for small places, 
+  alphabetically for the rest).
+  
+  The country prefix is either I<IT> (the ISO country code), or
+  I<I> (the CEPT code).
+  
+  If C<{-keep}> is used, the following variables will be set:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire postal code.
+  
+  =item $2
+  
+  The country code prefix.
+  
+  =item $3
+  
+  The postal code without the country prefix.
+  
+  =item $4
+  
+  The region.
+  
+  =item $5
+  
+  The province.
+  
+  =item $6 
+  
+  Capital or province.
+  
+  =item $7
+  
+  The route.
+  
+  =item $8
+  
+  The place on the route.
+  
+  =back
+  
+  =head2 C<$RE{zip}{Netherlands}>
+  
+  Returns a pattern that recognizes Dutch postal codes. Dutch postal
+  codes consist of 4 digits and 2 letters, separated by a space.
+  The separator can be changed using the C<{-sep}> option, as discussed
+  above. The (optional) country prefix is I<NL>, which is both the 
+  ISO country code and the CEPT code. Regexp::Common 2.107 and earlier
+  used C<$RE{zip}{Dutch}>. This is still supported.
+  
+  If C<{-keep}> is used, the following variables will be set:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire postal code.
+  
+  =item $2
+  
+  The country code prefix.
+  
+  =item $3
+  
+  The postal code without the country prefix.
+  
+  =item $4
+  
+  The digits part of the postal code.
+  
+  =item $5
+  
+  The separator between the digits and the letters.
+  
+  =item $6 
+  
+  The letters part of the postal code.
+  
+  =back
+  
+  =head2 C<< $RE{zip}{Norway} >>
+  
+  Returns a pattern that recognizes Norwegian postal codes. Norwegian
+  postal codes consist of four digits.
+  
+  The country prefix is either I<NO> (the ISO country code), or
+  I<N> (the CEPT code).
+  
+  If C<{-keep}> is used, the following variables will be set:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire postal code.
+  
+  =item $2
+  
+  The country code prefix.
+  
+  =item $3
+  
+  The postal code without the country prefix.
+  
+  =back
+  
+  =head2 C<< $RE{zip}{Spain} >>
+  
+  Returns a pattern that recognizes Spanish postal codes. Spanish postal
+  codes consist of 5 digits. The first 2 indicate one of Spains fifties
+  provinces (in alphabetical order), starting with C<00>. The third digit
+  indicates a main city or the main delivery rounds. The last two digits
+  are the delivery area, secondary delivery route or a link to rural areas.
+  
+  The country prefix is either I<ES> (the ISO country code), or
+  I<E> (the CEPT code).
+  
+  If C<{-keep}> is used, the following variables will be set:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire postal code.
+  
+  =item $2
+  
+  The country code prefix.
+  
+  =item $3
+  
+  The postal code without the country prefix.
+  
+  =item $4
+  
+  The two digits indicating the province.
+  
+  =item $5
+  
+  The digit indicating the main city or main delivery route.
+  
+  =item $6
+  
+  The digits indicating the delivery area, secondary delivery route
+  or a link to rural areas.
+  
+  =back
+  
+  =head2 C<< $RE{zip}{Switzerland} >>
+  
+  Returns a pattern that recognizes Swiss postal codes. Swiss postal
+  codes consist of 4 digits. The first indicates the district, starting
+  with 1. The second indicates the area, the third, the route, and the
+  fourth the post office number.
+  
+  =head2 C<< $RE{zip}{US}{-extended => [yes|no|allow]} >>
+  
+  Returns a pattern that recognizes US zip codes. US zip codes consist
+  of 5 digits, with an optional 4 digit extension. By default, extensions
+  are allowed, but not required. This can be influenced by the 
+  C<-extended> option. If its argument starts with a C<y>,
+  extensions are required; if the argument starts with a C<n>,
+  extensions will not be recognized. If an extension is used, a dash
+  is used to separate the main part from the extension, but this can
+  be changed with the C<-sep> option.
+  
+  The country prefix is either I<US> (the ISO country code), or
+  I<USA> (the CEPT code).
+  
+  If C<{-keep}> is being used, the following variables will be set:
+  
+  =over 4
+  
+  =item $1
+  
+  The entire postal code.
+  
+  =item $2
+  
+  The country code prefix.
+  
+  =item $3
+  
+  The postal code without the country prefix.
+  
+  =item $4
+  
+  The first 5 digits of the postal code.
+  
+  =item $5
+  
+  The first three digits of the postal code, indicating a sectional
+  center or a large city. New in Regexp::Common 2.119.
+  
+  =item $6
+  
+  The last 2 digits of the 5 digit part of the postal code, indicating
+  a post office facility or delivery area. New in Regexp::Common 2.119.
+  
+  =item $7
+  
+  The separator between the 5 digit part and the 4 digit part. Up to 
+  Regexp::Common 2.118, this used to be $5.
+  
+  =item $8
+  
+  The 4 digit part of the postal code (if any). Up to Regexp::Common 2.118,
+  this used to be $6.
+  
+  =item $9
+  
+  The first two digits of the 4 digit part of the postal code, indicating
+  a sector, or several blocks. New in Regexp::Common 2.119.
+  
+  =item $10
+  
+  The last two digits of the 4 digit part of the postal code, indicating
+  a segment or one side of a street. New in Regexp::Common 2.119.
+  
+  =back
+  
+  You need at least version 5.005_03 to be able to use US postal codes.
+  Older versions contain a bug that let the pattern match invalid US
+  postal codes.
+  
+  =head3 Questions
+  
+  =over 4
+  
+  =item
+  
+  Can the 5 digit part of the zip code (in theory) start with 000?
+  
+  =item
+  
+  Can the 5 digit part of the zip code (in theory) end with 00?
+  
+  =item
+  
+  Can the 4 digit part of the zip code (in theory) start with 00?
+  
+  =item
+  
+  Can the 4 digit part of the zip code (in theory) end with 00?
+  
+  =back
+  
+  =head1 SEE ALSO
+  
+  L<Regexp::Common> for a general description of how to use this interface.
+  
+  =over 4
+  
+  =item L<http://www.columbia.edu/kermit/postal.html>
+  
+  Frank's compulsive guide to postal addresses.
+  
+  =item L<http://www.upu.int/post_code/en/addressing_formats_guide.shtml>
+  
+  Postal addressing systems.
+  
+  =item L<http://www.uni-koeln.de/~arcd2/33e.htm>
+  
+  Postal code information.
+  
+  =item L<http://www.grcdi.nl/linkspc.htm>
+  
+  Links to Postcode Pages.
+  
+  =item L<http://www1.auspost.com.au/postcodes/>
+  
+  Information about Australian postal codes.
+  
+  =item L<http://hdusps.esecurecare.net/cgi-bin/hdusps.cfg/php/enduser/std_adp.php?p_faqid=1014>
+  
+  Information about US postal codes.
+  
+  =item L<http://en.wikipedia.org/wiki/Postal_code>
+  
+  =back
+  
+  =head1 AUTHORS
+  
+  Damian Conway S<(I<damian@conway.org>)> and
+  Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 MAINTAINANCE
+  
+  This package is maintained by Abigail S<(I<regexp-common@abigail.be>)>.
+  
+  =head1 BUGS AND IRRITATIONS
+  
+  Zip codes for most countries are missing.
+  Send them in to I<regexp-common@abigail.be>.
+  
+  =head1 LICENSE and COPYRIGHT
+  
+  This software is Copyright (c) 2001 - 2009, Damian Conway and Abigail.
+  
+  This module is free software, and maybe used under any of the following
+  licenses:
+  
+   1) The Perl Artistic License.     See the file COPYRIGHT.AL.
+   2) The Perl Artistic License 2.0. See the file COPYRIGHT.AL2.
+   3) The BSD Licence.               See the file COPYRIGHT.BSD.
+   4) The MIT Licence.               See the file COPYRIGHT.MIT.
+  
+  =cut
+REGEXP_COMMON_ZIP
+
+$fatpacked{"i386-linux-thread-multi/Data/Dumper.pm"} = <<'I386-LINUX-THREAD-MULTI_DATA_DUMPER';
+  #
+  # Data/Dumper.pm
+  #
+  # convert perl data structures into perl syntax suitable for both printing
+  # and eval
+  #
+  # Documentation at the __END__
+  #
+  
+  package Data::Dumper;
+  
+  $VERSION = '2.125'; # Don't forget to set version and release date in POD!
+  
+  #$| = 1;
+  
+  use 5.006_001;
+  require Exporter;
+  require overload;
+  
+  use Carp;
+  
+  BEGIN {
+      @ISA = qw(Exporter);
+      @EXPORT = qw(Dumper);
+      @EXPORT_OK = qw(DumperX);
+  
+      # if run under miniperl, or otherwise lacking dynamic loading,
+      # XSLoader should be attempted to load, or the pure perl flag
+      # toggled on load failure.
+      eval {
+  	require XSLoader;
+      };
+      $Useperl = 1 if $@;
+  }
+  
+  XSLoader::load( 'Data::Dumper' ) unless $Useperl;
+  
+  # module vars and their defaults
+  $Indent     = 2         unless defined $Indent;
+  $Purity     = 0         unless defined $Purity;
+  $Pad        = ""        unless defined $Pad;
+  $Varname    = "VAR"     unless defined $Varname;
+  $Useqq      = 0         unless defined $Useqq;
+  $Terse      = 0         unless defined $Terse;
+  $Freezer    = ""        unless defined $Freezer;
+  $Toaster    = ""        unless defined $Toaster;
+  $Deepcopy   = 0         unless defined $Deepcopy;
+  $Quotekeys  = 1         unless defined $Quotekeys;
+  $Bless      = "bless"   unless defined $Bless;
+  #$Expdepth   = 0         unless defined $Expdepth;
+  $Maxdepth   = 0         unless defined $Maxdepth;
+  $Pair       = ' => '    unless defined $Pair;
+  $Useperl    = 0         unless defined $Useperl;
+  $Sortkeys   = 0         unless defined $Sortkeys;
+  $Deparse    = 0         unless defined $Deparse;
+  
+  #
+  # expects an arrayref of values to be dumped.
+  # can optionally pass an arrayref of names for the values.
+  # names must have leading $ sign stripped. begin the name with *
+  # to cause output of arrays and hashes rather than refs.
+  #
+  sub new {
+    my($c, $v, $n) = @_;
+  
+    croak "Usage:  PACKAGE->new(ARRAYREF, [ARRAYREF])" 
+      unless (defined($v) && (ref($v) eq 'ARRAY'));
+    $n = [] unless (defined($n) && (ref($n) eq 'ARRAY'));
+  
+    my($s) = { 
+               level      => 0,           # current recursive depth
+  	     indent     => $Indent,     # various styles of indenting
+  	     pad	=> $Pad,        # all lines prefixed by this string
+  	     xpad       => "",          # padding-per-level
+  	     apad       => "",          # added padding for hash keys n such
+  	     sep        => "",          # list separator
+  	     pair	=> $Pair,	# hash key/value separator: defaults to ' => '
+  	     seen       => {},          # local (nested) refs (id => [name, val])
+  	     todump     => $v,          # values to dump []
+  	     names      => $n,          # optional names for values []
+  	     varname    => $Varname,    # prefix to use for tagging nameless ones
+               purity     => $Purity,     # degree to which output is evalable
+               useqq 	=> $Useqq,      # use "" for strings (backslashitis ensues)
+               terse 	=> $Terse,      # avoid name output (where feasible)
+               freezer	=> $Freezer,    # name of Freezer method for objects
+               toaster	=> $Toaster,    # name of method to revive objects
+               deepcopy	=> $Deepcopy,   # dont cross-ref, except to stop recursion
+               quotekeys	=> $Quotekeys,  # quote hash keys
+               'bless'	=> $Bless,	# keyword to use for "bless"
+  #	     expdepth   => $Expdepth,   # cutoff depth for explicit dumping
+  	     maxdepth	=> $Maxdepth,   # depth beyond which we give up
+  	     useperl    => $Useperl,    # use the pure Perl implementation
+  	     sortkeys   => $Sortkeys,   # flag or filter for sorting hash keys
+  	     deparse	=> $Deparse,	# use B::Deparse for coderefs
+  	   };
+  
+    if ($Indent > 0) {
+      $s->{xpad} = "  ";
+      $s->{sep} = "\n";
+    }
+    return bless($s, $c);
+  }
+  
+  if ($] >= 5.008) {
+    # Packed numeric addresses take less memory. Plus pack is faster than sprintf
+    *init_refaddr_format = sub {};
+  
+    *format_refaddr  = sub {
+      require Scalar::Util;
+      pack "J", Scalar::Util::refaddr(shift);
+    };
+  } else {
+    *init_refaddr_format = sub {
+      require Config;
+      my $f = $Config::Config{uvxformat};
+      $f =~ tr/"//d;
+      our $refaddr_format = "0x%" . $f;
+    };
+  
+    *format_refaddr = sub {
+      require Scalar::Util;
+      sprintf our $refaddr_format, Scalar::Util::refaddr(shift);
+    }
+  }
+  
+  #
+  # add-to or query the table of already seen references
+  #
+  sub Seen {
+    my($s, $g) = @_;
+    if (defined($g) && (ref($g) eq 'HASH'))  {
+      init_refaddr_format();
+      my($k, $v, $id);
+      while (($k, $v) = each %$g) {
+        if (defined $v and ref $v) {
+  	$id = format_refaddr($v);
+  	if ($k =~ /^[*](.*)$/) {
+  	  $k = (ref $v eq 'ARRAY') ? ( "\\\@" . $1 ) :
+  	       (ref $v eq 'HASH')  ? ( "\\\%" . $1 ) :
+  	       (ref $v eq 'CODE')  ? ( "\\\&" . $1 ) :
+  				     (   "\$" . $1 ) ;
+  	}
+  	elsif ($k !~ /^\$/) {
+  	  $k = "\$" . $k;
+  	}
+  	$s->{seen}{$id} = [$k, $v];
+        }
+        else {
+  	carp "Only refs supported, ignoring non-ref item \$$k";
+        }
+      }
+      return $s;
+    }
+    else {
+      return map { @$_ } values %{$s->{seen}};
+    }
+  }
+  
+  #
+  # set or query the values to be dumped
+  #
+  sub Values {
+    my($s, $v) = @_;
+    if (defined($v) && (ref($v) eq 'ARRAY'))  {
+      $s->{todump} = [@$v];        # make a copy
+      return $s;
+    }
+    else {
+      return @{$s->{todump}};
+    }
+  }
+  
+  #
+  # set or query the names of the values to be dumped
+  #
+  sub Names {
+    my($s, $n) = @_;
+    if (defined($n) && (ref($n) eq 'ARRAY'))  {
+      $s->{names} = [@$n];         # make a copy
+      return $s;
+    }
+    else {
+      return @{$s->{names}};
+    }
+  }
+  
+  sub DESTROY {}
+  
+  sub Dump {
+      return &Dumpxs
+  	unless $Data::Dumper::Useperl || (ref($_[0]) && $_[0]->{useperl}) ||
+  	       $Data::Dumper::Useqq   || (ref($_[0]) && $_[0]->{useqq}) ||
+  	       $Data::Dumper::Deparse || (ref($_[0]) && $_[0]->{deparse});
+      return &Dumpperl;
+  }
+  
+  #
+  # dump the refs in the current dumper object.
+  # expects same args as new() if called via package name.
+  #
+  sub Dumpperl {
+    my($s) = shift;
+    my(@out, $val, $name);
+    my($i) = 0;
+    local(@post);
+    init_refaddr_format();
+  
+    $s = $s->new(@_) unless ref $s;
+  
+    for $val (@{$s->{todump}}) {
+      my $out = "";
+      @post = ();
+      $name = $s->{names}[$i++];
+      if (defined $name) {
+        if ($name =~ /^[*](.*)$/) {
+  	if (defined $val) {
+  	  $name = (ref $val eq 'ARRAY') ? ( "\@" . $1 ) :
+  		  (ref $val eq 'HASH')  ? ( "\%" . $1 ) :
+  		  (ref $val eq 'CODE')  ? ( "\*" . $1 ) :
+  					  ( "\$" . $1 ) ;
+  	}
+  	else {
+  	  $name = "\$" . $1;
+  	}
+        }
+        elsif ($name !~ /^\$/) {
+  	$name = "\$" . $name;
+        }
+      }
+      else {
+        $name = "\$" . $s->{varname} . $i;
+      }
+  
+      my $valstr;
+      {
+        local($s->{apad}) = $s->{apad};
+        $s->{apad} .= ' ' x (length($name) + 3) if $s->{indent} >= 2;
+        $valstr = $s->_dump($val, $name);
+      }
+  
+      $valstr = "$name = " . $valstr . ';' if @post or !$s->{terse};
+      $out .= $s->{pad} . $valstr . $s->{sep};
+      $out .= $s->{pad} . join(';' . $s->{sep} . $s->{pad}, @post) 
+        . ';' . $s->{sep} if @post;
+  
+      push @out, $out;
+    }
+    return wantarray ? @out : join('', @out);
+  }
+  
+  # wrap string in single quotes (escaping if needed)
+  sub _quote {
+      my $val = shift;
+      $val =~ s/([\\\'])/\\$1/g;
+      return  "'" . $val .  "'";
+  }
+  
+  #
+  # twist, toil and turn;
+  # and recurse, of course.
+  # sometimes sordidly;
+  # and curse if no recourse.
+  #
+  sub _dump {
+    my($s, $val, $name) = @_;
+    my($sname);
+    my($out, $realpack, $realtype, $type, $ipad, $id, $blesspad);
+  
+    $type = ref $val;
+    $out = "";
+  
+    if ($type) {
+  
+      # Call the freezer method if it's specified and the object has the
+      # method.  Trap errors and warn() instead of die()ing, like the XS
+      # implementation.
+      my $freezer = $s->{freezer};
+      if ($freezer and UNIVERSAL::can($val, $freezer)) {
+        eval { $val->$freezer() };
+        warn "WARNING(Freezer method call failed): $@" if $@;
+      }
+  
+      require Scalar::Util;
+      $realpack = Scalar::Util::blessed($val);
+      $realtype = $realpack ? Scalar::Util::reftype($val) : ref $val;
+      $id = format_refaddr($val);
+  
+      # if it has a name, we need to either look it up, or keep a tab
+      # on it so we know when we hit it later
+      if (defined($name) and length($name)) {
+        # keep a tab on it so that we dont fall into recursive pit
+        if (exists $s->{seen}{$id}) {
+  #	if ($s->{expdepth} < $s->{level}) {
+  	  if ($s->{purity} and $s->{level} > 0) {
+  	    $out = ($realtype eq 'HASH')  ? '{}' :
+  	      ($realtype eq 'ARRAY') ? '[]' :
+  		'do{my $o}' ;
+  	    push @post, $name . " = " . $s->{seen}{$id}[0];
+  	  }
+  	  else {
+  	    $out = $s->{seen}{$id}[0];
+  	    if ($name =~ /^([\@\%])/) {
+  	      my $start = $1;
+  	      if ($out =~ /^\\$start/) {
+  		$out = substr($out, 1);
+  	      }
+  	      else {
+  		$out = $start . '{' . $out . '}';
+  	      }
+  	    }
+            }
+  	  return $out;
+  #        }
+        }
+        else {
+          # store our name
+          $s->{seen}{$id} = [ (($name =~ /^[@%]/)     ? ('\\' . $name ) :
+  			     ($realtype eq 'CODE' and
+  			      $name =~ /^[*](.*)$/) ? ('\\&' . $1 )   :
+  			     $name          ),
+  			    $val ];
+        }
+      }
+      my $no_bless = 0; 
+      my $is_regex = 0;
+      if ( $realpack and ($] >= 5.009005 ? re::is_regexp($val) : $realpack eq 'Regexp') ) {
+          $is_regex = 1;
+          $no_bless = $realpack eq 'Regexp';
+      }
+  
+      # If purity is not set and maxdepth is set, then check depth: 
+      # if we have reached maximum depth, return the string
+      # representation of the thing we are currently examining
+      # at this depth (i.e., 'Foo=ARRAY(0xdeadbeef)'). 
+      if (!$s->{purity}
+  	and $s->{maxdepth} > 0
+  	and $s->{level} >= $s->{maxdepth})
+      {
+        return qq['$val'];
+      }
+  
+      # we have a blessed ref
+      if ($realpack and !$no_bless) {
+        $out = $s->{'bless'} . '( ';
+        $blesspad = $s->{apad};
+        $s->{apad} .= '       ' if ($s->{indent} >= 2);
+      }
+  
+      $s->{level}++;
+      $ipad = $s->{xpad} x $s->{level};
+  
+      if ($is_regex) {
+          my $pat;
+          # This really sucks, re:regexp_pattern is in ext/re/re.xs and not in 
+          # universal.c, and even worse we cant just require that re to be loaded
+          # we *have* to use() it. 
+          # We should probably move it to universal.c for 5.10.1 and fix this.
+          # Currently we only use re::regexp_pattern when the re is blessed into another
+          # package. This has the disadvantage of meaning that a DD dump won't round trip
+          # as the pattern will be repeatedly wrapped with the same modifiers.
+          # This is an aesthetic issue so we will leave it for now, but we could use
+          # regexp_pattern() in list context to get the modifiers separately.
+          # But since this means loading the full debugging engine in process we wont
+          # bother unless its necessary for accuracy.
+          if (($realpack ne 'Regexp') && defined(*re::regexp_pattern{CODE})) {
+              $pat = re::regexp_pattern($val);
+          } else {
+              $pat = "$val";
+          }
+          $pat =~ s,/,\\/,g;
+          $out .= "qr/$pat/";
+      }
+      elsif ($realtype eq 'SCALAR' || $realtype eq 'REF') {
+        if ($realpack) {
+  	$out .= 'do{\\(my $o = ' . $s->_dump($$val, "\${$name}") . ')}';
+        }
+        else {
+  	$out .= '\\' . $s->_dump($$val, "\${$name}");
+        }
+      }
+      elsif ($realtype eq 'GLOB') {
+  	$out .= '\\' . $s->_dump($$val, "*{$name}");
+      }
+      elsif ($realtype eq 'ARRAY') {
+        my($pad, $mname);
+        my($i) = 0;
+        $out .= ($name =~ /^\@/) ? '(' : '[';
+        $pad = $s->{sep} . $s->{pad} . $s->{apad};
+        ($name =~ /^\@(.*)$/) ? ($mname = "\$" . $1) : 
+  	# omit -> if $foo->[0]->{bar}, but not ${$foo->[0]}->{bar}
+  	($name =~ /^\\?[\%\@\*\$][^{].*[]}]$/) ? ($mname = $name) :
+  	  ($mname = $name . '->');
+        $mname .= '->' if $mname =~ /^\*.+\{[A-Z]+\}$/;
+        for my $v (@$val) {
+  	$sname = $mname . '[' . $i . ']';
+  	$out .= $pad . $ipad . '#' . $i if $s->{indent} >= 3;
+  	$out .= $pad . $ipad . $s->_dump($v, $sname);
+  	$out .= "," if $i++ < $#$val;
+        }
+        $out .= $pad . ($s->{xpad} x ($s->{level} - 1)) if $i;
+        $out .= ($name =~ /^\@/) ? ')' : ']';
+      }
+      elsif ($realtype eq 'HASH') {
+        my($k, $v, $pad, $lpad, $mname, $pair);
+        $out .= ($name =~ /^\%/) ? '(' : '{';
+        $pad = $s->{sep} . $s->{pad} . $s->{apad};
+        $lpad = $s->{apad};
+        $pair = $s->{pair};
+        ($name =~ /^\%(.*)$/) ? ($mname = "\$" . $1) :
+  	# omit -> if $foo->[0]->{bar}, but not ${$foo->[0]}->{bar}
+  	($name =~ /^\\?[\%\@\*\$][^{].*[]}]$/) ? ($mname = $name) :
+  	  ($mname = $name . '->');
+        $mname .= '->' if $mname =~ /^\*.+\{[A-Z]+\}$/;
+        my ($sortkeys, $keys, $key) = ("$s->{sortkeys}");
+        if ($sortkeys) {
+  	if (ref($s->{sortkeys}) eq 'CODE') {
+  	  $keys = $s->{sortkeys}($val);
+  	  unless (ref($keys) eq 'ARRAY') {
+  	    carp "Sortkeys subroutine did not return ARRAYREF";
+  	    $keys = [];
+  	  }
+  	}
+  	else {
+  	  $keys = [ sort keys %$val ];
+  	}
+        }
+  
+        # Ensure hash iterator is reset
+        keys(%$val);
+  
+        while (($k, $v) = ! $sortkeys ? (each %$val) :
+  	     @$keys ? ($key = shift(@$keys), $val->{$key}) :
+  	     () ) 
+        {
+  	my $nk = $s->_dump($k, "");
+  	$nk = $1 if !$s->{quotekeys} and $nk =~ /^[\"\']([A-Za-z_]\w*)[\"\']$/;
+  	$sname = $mname . '{' . $nk . '}';
+  	$out .= $pad . $ipad . $nk . $pair;
+  
+  	# temporarily alter apad
+  	$s->{apad} .= (" " x (length($nk) + 4)) if $s->{indent} >= 2;
+  	$out .= $s->_dump($val->{$k}, $sname) . ",";
+  	$s->{apad} = $lpad if $s->{indent} >= 2;
+        }
+        if (substr($out, -1) eq ',') {
+  	chop $out;
+  	$out .= $pad . ($s->{xpad} x ($s->{level} - 1));
+        }
+        $out .= ($name =~ /^\%/) ? ')' : '}';
+      }
+      elsif ($realtype eq 'CODE') {
+        if ($s->{deparse}) {
+  	require B::Deparse;
+  	my $sub =  'sub ' . (B::Deparse->new)->coderef2text($val);
+  	$pad    =  $s->{sep} . $s->{pad} . $s->{apad} . $s->{xpad} x ($s->{level} - 1);
+  	$sub    =~ s/\n/$pad/gse;
+  	$out   .=  $sub;
+        } else {
+          $out .= 'sub { "DUMMY" }';
+          carp "Encountered CODE ref, using dummy placeholder" if $s->{purity};
+        }
+      }
+      else {
+        croak "Can\'t handle $realtype type.";
+      }
+      
+      if ($realpack and !$no_bless) { # we have a blessed ref
+        $out .= ', ' . _quote($realpack) . ' )';
+        $out .= '->' . $s->{toaster} . '()'  if $s->{toaster} ne '';
+        $s->{apad} = $blesspad;
+      }
+      $s->{level}--;
+  
+    }
+    else {                                 # simple scalar
+  
+      my $ref = \$_[1];
+      # first, catalog the scalar
+      if ($name ne '') {
+        $id = format_refaddr($ref);
+        if (exists $s->{seen}{$id}) {
+          if ($s->{seen}{$id}[2]) {
+  	  $out = $s->{seen}{$id}[0];
+  	  #warn "[<$out]\n";
+  	  return "\${$out}";
+  	}
+        }
+        else {
+  	#warn "[>\\$name]\n";
+  	$s->{seen}{$id} = ["\\$name", $ref];
+        }
+      }
+      if (ref($ref) eq 'GLOB' or "$ref" =~ /=GLOB\([^()]+\)$/) {  # glob
+        my $name = substr($val, 1);
+        if ($name =~ /^[A-Za-z_][\w:]*$/) {
+  	$name =~ s/^main::/::/;
+  	$sname = $name;
+        }
+        else {
+  	$sname = $s->_dump($name, "");
+  	$sname = '{' . $sname . '}';
+        }
+        if ($s->{purity}) {
+  	my $k;
+  	local ($s->{level}) = 0;
+  	for $k (qw(SCALAR ARRAY HASH)) {
+  	  my $gval = *$val{$k};
+  	  next unless defined $gval;
+  	  next if $k eq "SCALAR" && ! defined $$gval;  # always there
+  
+  	  # _dump can push into @post, so we hold our place using $postlen
+  	  my $postlen = scalar @post;
+  	  $post[$postlen] = "\*$sname = ";
+  	  local ($s->{apad}) = " " x length($post[$postlen]) if $s->{indent} >= 2;
+  	  $post[$postlen] .= $s->_dump($gval, "\*$sname\{$k\}");
+  	}
+        }
+        $out .= '*' . $sname;
+      }
+      elsif (!defined($val)) {
+        $out .= "undef";
+      }
+      elsif ($val =~ /^(?:0|-?[1-9]\d{0,8})\z/) { # safe decimal number
+        $out .= $val;
+      }
+      else {				 # string
+        if ($s->{useqq} or $val =~ tr/\0-\377//c) {
+          # Fall back to qq if there's Unicode
+  	$out .= qquote($val, $s->{useqq});
+        }
+        else {
+          $out .= _quote($val);
+        }
+      }
+    }
+    if ($id) {
+      # if we made it this far, $id was added to seen list at current
+      # level, so remove it to get deep copies
+      if ($s->{deepcopy}) {
+        delete($s->{seen}{$id});
+      }
+      elsif ($name) {
+        $s->{seen}{$id}[2] = 1;
+      }
+    }
+    return $out;
+  }
+    
+  #
+  # non-OO style of earlier version
+  #
+  sub Dumper {
+    return Data::Dumper->Dump([@_]);
+  }
+  
+  # compat stub
+  sub DumperX {
+    return Data::Dumper->Dumpxs([@_], []);
+  }
+  
+  sub Dumpf { return Data::Dumper->Dump(@_) }
+  
+  sub Dumpp { print Data::Dumper->Dump(@_) }
+  
+  #
+  # reset the "seen" cache 
+  #
+  sub Reset {
+    my($s) = shift;
+    $s->{seen} = {};
+    return $s;
+  }
+  
+  sub Indent {
+    my($s, $v) = @_;
+    if (defined($v)) {
+      if ($v == 0) {
+        $s->{xpad} = "";
+        $s->{sep} = "";
+      }
+      else {
+        $s->{xpad} = "  ";
+        $s->{sep} = "\n";
+      }
+      $s->{indent} = $v;
+      return $s;
+    }
+    else {
+      return $s->{indent};
+    }
+  }
+  
+  sub Pair {
+      my($s, $v) = @_;
+      defined($v) ? (($s->{pair} = $v), return $s) : $s->{pair};
+  }
+  
+  sub Pad {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{pad} = $v), return $s) : $s->{pad};
+  }
+  
+  sub Varname {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{varname} = $v), return $s) : $s->{varname};
+  }
+  
+  sub Purity {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{purity} = $v), return $s) : $s->{purity};
+  }
+  
+  sub Useqq {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{useqq} = $v), return $s) : $s->{useqq};
+  }
+  
+  sub Terse {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{terse} = $v), return $s) : $s->{terse};
+  }
+  
+  sub Freezer {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{freezer} = $v), return $s) : $s->{freezer};
+  }
+  
+  sub Toaster {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{toaster} = $v), return $s) : $s->{toaster};
+  }
+  
+  sub Deepcopy {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{deepcopy} = $v), return $s) : $s->{deepcopy};
+  }
+  
+  sub Quotekeys {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{quotekeys} = $v), return $s) : $s->{quotekeys};
+  }
+  
+  sub Bless {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{'bless'} = $v), return $s) : $s->{'bless'};
+  }
+  
+  sub Maxdepth {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{'maxdepth'} = $v), return $s) : $s->{'maxdepth'};
+  }
+  
+  sub Useperl {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{'useperl'} = $v), return $s) : $s->{'useperl'};
+  }
+  
+  sub Sortkeys {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{'sortkeys'} = $v), return $s) : $s->{'sortkeys'};
+  }
+  
+  sub Deparse {
+    my($s, $v) = @_;
+    defined($v) ? (($s->{'deparse'} = $v), return $s) : $s->{'deparse'};
+  }
+  
+  # used by qquote below
+  my %esc = (  
+      "\a" => "\\a",
+      "\b" => "\\b",
+      "\t" => "\\t",
+      "\n" => "\\n",
+      "\f" => "\\f",
+      "\r" => "\\r",
+      "\e" => "\\e",
+  );
+  
+  # put a string value in double quotes
+  sub qquote {
+    local($_) = shift;
+    s/([\\\"\@\$])/\\$1/g;
+    my $bytes; { use bytes; $bytes = length }
+    s/([^\x00-\x7f])/'\x{'.sprintf("%x",ord($1)).'}'/ge if $bytes > length;
+    return qq("$_") unless 
+      /[^ !"\#\$%&'()*+,\-.\/0-9:;<=>?\@A-Z[\\\]^_`a-z{|}~]/;  # fast exit
+  
+    my $high = shift || "";
+    s/([\a\b\t\n\f\r\e])/$esc{$1}/g;
+  
+    if (ord('^')==94)  { # ascii
+      # no need for 3 digits in escape for these
+      s/([\0-\037])(?!\d)/'\\'.sprintf('%o',ord($1))/eg;
+      s/([\0-\037\177])/'\\'.sprintf('%03o',ord($1))/eg;
+      # all but last branch below not supported --BEHAVIOR SUBJECT TO CHANGE--
+      if ($high eq "iso8859") {
+        s/([\200-\240])/'\\'.sprintf('%o',ord($1))/eg;
+      } elsif ($high eq "utf8") {
+  #     use utf8;
+  #     $str =~ s/([^\040-\176])/sprintf "\\x{%04x}", ord($1)/ge;
+      } elsif ($high eq "8bit") {
+          # leave it as it is
+      } else {
+        s/([\200-\377])/'\\'.sprintf('%03o',ord($1))/eg;
+        s/([^\040-\176])/sprintf "\\x{%04x}", ord($1)/ge;
+      }
+    }
+    else { # ebcdic
+        s{([^ !"\#\$%&'()*+,\-.\/0-9:;<=>?\@A-Z[\\\]^_`a-z{|}~])(?!\d)}
+         {my $v = ord($1); '\\'.sprintf(($v <= 037 ? '%o' : '%03o'), $v)}eg;
+        s{([^ !"\#\$%&'()*+,\-.\/0-9:;<=>?\@A-Z[\\\]^_`a-z{|}~])}
+         {'\\'.sprintf('%03o',ord($1))}eg;
+    }
+  
+    return qq("$_");
+  }
+  
+  # helper sub to sort hash keys in Perl < 5.8.0 where we don't have
+  # access to sortsv() from XS
+  sub _sortkeys { [ sort keys %{$_[0]} ] }
+  
+  1;
+  __END__
+  
+  =head1 NAME
+  
+  Data::Dumper - stringified perl data structures, suitable for both printing and C<eval>
+  
+  =head1 SYNOPSIS
+  
+      use Data::Dumper;
+  
+      # simple procedural interface
+      print Dumper($foo, $bar);
+  
+      # extended usage with names
+      print Data::Dumper->Dump([$foo, $bar], [qw(foo *ary)]);
+  
+      # configuration variables
+      {
+        local $Data::Dumper::Purity = 1;
+        eval Data::Dumper->Dump([$foo, $bar], [qw(foo *ary)]);
+      }
+  
+      # OO usage
+      $d = Data::Dumper->new([$foo, $bar], [qw(foo *ary)]);
+         ...
+      print $d->Dump;
+         ...
+      $d->Purity(1)->Terse(1)->Deepcopy(1);
+      eval $d->Dump;
+  
+  
+  =head1 DESCRIPTION
+  
+  Given a list of scalars or reference variables, writes out their contents in
+  perl syntax. The references can also be objects.  The content of each
+  variable is output in a single Perl statement.  Handles self-referential
+  structures correctly.
+  
+  The return value can be C<eval>ed to get back an identical copy of the
+  original reference structure.
+  
+  Any references that are the same as one of those passed in will be named
+  C<$VAR>I<n> (where I<n> is a numeric suffix), and other duplicate references
+  to substructures within C<$VAR>I<n> will be appropriately labeled using arrow
+  notation.  You can specify names for individual values to be dumped if you
+  use the C<Dump()> method, or you can change the default C<$VAR> prefix to
+  something else.  See C<$Data::Dumper::Varname> and C<$Data::Dumper::Terse>
+  below.
+  
+  The default output of self-referential structures can be C<eval>ed, but the
+  nested references to C<$VAR>I<n> will be undefined, since a recursive
+  structure cannot be constructed using one Perl statement.  You should set the
+  C<Purity> flag to 1 to get additional statements that will correctly fill in
+  these references.  Moreover, if C<eval>ed when strictures are in effect,
+  you need to ensure that any variables it accesses are previously declared.
+  
+  In the extended usage form, the references to be dumped can be given
+  user-specified names.  If a name begins with a C<*>, the output will 
+  describe the dereferenced type of the supplied reference for hashes and
+  arrays, and coderefs.  Output of names will be avoided where possible if
+  the C<Terse> flag is set.
+  
+  In many cases, methods that are used to set the internal state of the
+  object will return the object itself, so method calls can be conveniently
+  chained together.
+  
+  Several styles of output are possible, all controlled by setting
+  the C<Indent> flag.  See L<Configuration Variables or Methods> below 
+  for details.
+  
+  
+  =head2 Methods
+  
+  =over 4
+  
+  =item I<PACKAGE>->new(I<ARRAYREF [>, I<ARRAYREF]>)
+  
+  Returns a newly created C<Data::Dumper> object.  The first argument is an
+  anonymous array of values to be dumped.  The optional second argument is an
+  anonymous array of names for the values.  The names need not have a leading
+  C<$> sign, and must be comprised of alphanumeric characters.  You can begin
+  a name with a C<*> to specify that the dereferenced type must be dumped
+  instead of the reference itself, for ARRAY and HASH references.
+  
+  The prefix specified by C<$Data::Dumper::Varname> will be used with a
+  numeric suffix if the name for a value is undefined.
+  
+  Data::Dumper will catalog all references encountered while dumping the
+  values. Cross-references (in the form of names of substructures in perl
+  syntax) will be inserted at all possible points, preserving any structural
+  interdependencies in the original set of values.  Structure traversal is
+  depth-first,  and proceeds in order from the first supplied value to
+  the last.
+  
+  =item I<$OBJ>->Dump  I<or>  I<PACKAGE>->Dump(I<ARRAYREF [>, I<ARRAYREF]>)
+  
+  Returns the stringified form of the values stored in the object (preserving
+  the order in which they were supplied to C<new>), subject to the
+  configuration options below.  In a list context, it returns a list
+  of strings corresponding to the supplied values.
+  
+  The second form, for convenience, simply calls the C<new> method on its
+  arguments before dumping the object immediately.
+  
+  =item I<$OBJ>->Seen(I<[HASHREF]>)
+  
+  Queries or adds to the internal table of already encountered references.
+  You must use C<Reset> to explicitly clear the table if needed.  Such
+  references are not dumped; instead, their names are inserted wherever they
+  are encountered subsequently.  This is useful especially for properly
+  dumping subroutine references.
+  
+  Expects an anonymous hash of name => value pairs.  Same rules apply for names
+  as in C<new>.  If no argument is supplied, will return the "seen" list of
+  name => value pairs, in a list context.  Otherwise, returns the object
+  itself.
+  
+  =item I<$OBJ>->Values(I<[ARRAYREF]>)
+  
+  Queries or replaces the internal array of values that will be dumped.
+  When called without arguments, returns the values.  Otherwise, returns the
+  object itself.
+  
+  =item I<$OBJ>->Names(I<[ARRAYREF]>)
+  
+  Queries or replaces the internal array of user supplied names for the values
+  that will be dumped.  When called without arguments, returns the names.
+  Otherwise, returns the object itself.
+  
+  =item I<$OBJ>->Reset
+  
+  Clears the internal table of "seen" references and returns the object
+  itself.
+  
+  =back
+  
+  =head2 Functions
+  
+  =over 4
+  
+  =item Dumper(I<LIST>)
+  
+  Returns the stringified form of the values in the list, subject to the
+  configuration options below.  The values will be named C<$VAR>I<n> in the
+  output, where I<n> is a numeric suffix.  Will return a list of strings
+  in a list context.
+  
+  =back
+  
+  =head2 Configuration Variables or Methods
+  
+  Several configuration variables can be used to control the kind of output
+  generated when using the procedural interface.  These variables are usually
+  C<local>ized in a block so that other parts of the code are not affected by
+  the change.  
+  
+  These variables determine the default state of the object created by calling
+  the C<new> method, but cannot be used to alter the state of the object
+  thereafter.  The equivalent method names should be used instead to query
+  or set the internal state of the object.
+  
+  The method forms return the object itself when called with arguments,
+  so that they can be chained together nicely.
+  
+  =over 4
+  
+  =item *
+  
+  $Data::Dumper::Indent  I<or>  I<$OBJ>->Indent(I<[NEWVAL]>)
+  
+  Controls the style of indentation.  It can be set to 0, 1, 2 or 3.  Style 0
+  spews output without any newlines, indentation, or spaces between list
+  items.  It is the most compact format possible that can still be called
+  valid perl.  Style 1 outputs a readable form with newlines but no fancy
+  indentation (each level in the structure is simply indented by a fixed
+  amount of whitespace).  Style 2 (the default) outputs a very readable form
+  which takes into account the length of hash keys (so the hash value lines
+  up).  Style 3 is like style 2, but also annotates the elements of arrays
+  with their index (but the comment is on its own line, so array output
+  consumes twice the number of lines).  Style 2 is the default.
+  
+  =item *
+  
+  $Data::Dumper::Purity  I<or>  I<$OBJ>->Purity(I<[NEWVAL]>)
+  
+  Controls the degree to which the output can be C<eval>ed to recreate the
+  supplied reference structures.  Setting it to 1 will output additional perl
+  statements that will correctly recreate nested references.  The default is
+  0.
+  
+  =item *
+  
+  $Data::Dumper::Pad  I<or>  I<$OBJ>->Pad(I<[NEWVAL]>)
+  
+  Specifies the string that will be prefixed to every line of the output.
+  Empty string by default.
+  
+  =item *
+  
+  $Data::Dumper::Varname  I<or>  I<$OBJ>->Varname(I<[NEWVAL]>)
+  
+  Contains the prefix to use for tagging variable names in the output. The
+  default is "VAR".
+  
+  =item *
+  
+  $Data::Dumper::Useqq  I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>)
+  
+  When set, enables the use of double quotes for representing string values.
+  Whitespace other than space will be represented as C<[\n\t\r]>, "unsafe"
+  characters will be backslashed, and unprintable characters will be output as
+  quoted octal integers.  Since setting this variable imposes a performance
+  penalty, the default is 0.  C<Dump()> will run slower if this flag is set,
+  since the fast XSUB implementation doesn't support it yet.
+  
+  =item *
+  
+  $Data::Dumper::Terse  I<or>  I<$OBJ>->Terse(I<[NEWVAL]>)
+  
+  When set, Data::Dumper will emit single, non-self-referential values as
+  atoms/terms rather than statements.  This means that the C<$VAR>I<n> names
+  will be avoided where possible, but be advised that such output may not
+  always be parseable by C<eval>.
+  
+  =item *
+  
+  $Data::Dumper::Freezer  I<or>  $I<OBJ>->Freezer(I<[NEWVAL]>)
+  
+  Can be set to a method name, or to an empty string to disable the feature.
+  Data::Dumper will invoke that method via the object before attempting to
+  stringify it.  This method can alter the contents of the object (if, for
+  instance, it contains data allocated from C), and even rebless it in a
+  different package.  The client is responsible for making sure the specified
+  method can be called via the object, and that the object ends up containing
+  only perl data types after the method has been called.  Defaults to an empty
+  string.
+  
+  If an object does not support the method specified (determined using
+  UNIVERSAL::can()) then the call will be skipped.  If the method dies a
+  warning will be generated.
+  
+  =item *
+  
+  $Data::Dumper::Toaster  I<or>  $I<OBJ>->Toaster(I<[NEWVAL]>)
+  
+  Can be set to a method name, or to an empty string to disable the feature.
+  Data::Dumper will emit a method call for any objects that are to be dumped
+  using the syntax C<bless(DATA, CLASS)-E<gt>METHOD()>.  Note that this means that
+  the method specified will have to perform any modifications required on the
+  object (like creating new state within it, and/or reblessing it in a
+  different package) and then return it.  The client is responsible for making
+  sure the method can be called via the object, and that it returns a valid
+  object.  Defaults to an empty string.
+  
+  =item *
+  
+  $Data::Dumper::Deepcopy  I<or>  $I<OBJ>->Deepcopy(I<[NEWVAL]>)
+  
+  Can be set to a boolean value to enable deep copies of structures.
+  Cross-referencing will then only be done when absolutely essential
+  (i.e., to break reference cycles).  Default is 0.
+  
+  =item *
+  
+  $Data::Dumper::Quotekeys  I<or>  $I<OBJ>->Quotekeys(I<[NEWVAL]>)
+  
+  Can be set to a boolean value to control whether hash keys are quoted.
+  A false value will avoid quoting hash keys when it looks like a simple
+  string.  Default is 1, which will always enclose hash keys in quotes.
+  
+  =item *
+  
+  $Data::Dumper::Bless  I<or>  $I<OBJ>->Bless(I<[NEWVAL]>)
+  
+  Can be set to a string that specifies an alternative to the C<bless>
+  builtin operator used to create objects.  A function with the specified
+  name should exist, and should accept the same arguments as the builtin.
+  Default is C<bless>.
+  
+  =item *
+  
+  $Data::Dumper::Pair  I<or>  $I<OBJ>->Pair(I<[NEWVAL]>)
+  
+  Can be set to a string that specifies the separator between hash keys
+  and values. To dump nested hash, array and scalar values to JavaScript,
+  use: C<$Data::Dumper::Pair = ' : ';>. Implementing C<bless> in JavaScript
+  is left as an exercise for the reader.
+  A function with the specified name exists, and accepts the same arguments
+  as the builtin.
+  
+  Default is: C< =E<gt> >.
+  
+  =item *
+  
+  $Data::Dumper::Maxdepth  I<or>  $I<OBJ>->Maxdepth(I<[NEWVAL]>)
+  
+  Can be set to a positive integer that specifies the depth beyond which
+  we don't venture into a structure.  Has no effect when
+  C<Data::Dumper::Purity> is set.  (Useful in debugger when we often don't
+  want to see more than enough).  Default is 0, which means there is 
+  no maximum depth. 
+  
+  =item *
+  
+  $Data::Dumper::Useperl  I<or>  $I<OBJ>->Useperl(I<[NEWVAL]>)
+  
+  Can be set to a boolean value which controls whether the pure Perl
+  implementation of C<Data::Dumper> is used. The C<Data::Dumper> module is
+  a dual implementation, with almost all functionality written in both
+  pure Perl and also in XS ('C'). Since the XS version is much faster, it
+  will always be used if possible. This option lets you override the
+  default behavior, usually for testing purposes only. Default is 0, which
+  means the XS implementation will be used if possible.
+  
+  =item *
+  
+  $Data::Dumper::Sortkeys  I<or>  $I<OBJ>->Sortkeys(I<[NEWVAL]>)
+  
+  Can be set to a boolean value to control whether hash keys are dumped in
+  sorted order. A true value will cause the keys of all hashes to be
+  dumped in Perl's default sort order. Can also be set to a subroutine
+  reference which will be called for each hash that is dumped. In this
+  case C<Data::Dumper> will call the subroutine once for each hash,
+  passing it the reference of the hash. The purpose of the subroutine is
+  to return a reference to an array of the keys that will be dumped, in
+  the order that they should be dumped. Using this feature, you can
+  control both the order of the keys, and which keys are actually used. In
+  other words, this subroutine acts as a filter by which you can exclude
+  certain keys from being dumped. Default is 0, which means that hash keys
+  are not sorted.
+  
+  =item *
+  
+  $Data::Dumper::Deparse  I<or>  $I<OBJ>->Deparse(I<[NEWVAL]>)
+  
+  Can be set to a boolean value to control whether code references are
+  turned into perl source code. If set to a true value, C<B::Deparse>
+  will be used to get the source of the code reference. Using this option
+  will force using the Perl implementation of the dumper, since the fast
+  XSUB implementation doesn't support it.
+  
+  Caution : use this option only if you know that your coderefs will be
+  properly reconstructed by C<B::Deparse>.
+  
+  =back
+  
+  =head2 Exports
+  
+  =over 4
+  
+  =item Dumper
+  
+  =back
+  
+  =head1 EXAMPLES
+  
+  Run these code snippets to get a quick feel for the behavior of this
+  module.  When you are through with these examples, you may want to
+  add or change the various configuration variables described above,
+  to see their behavior.  (See the testsuite in the Data::Dumper
+  distribution for more examples.)
+  
+  
+      use Data::Dumper;
+  
+      package Foo;
+      sub new {bless {'a' => 1, 'b' => sub { return "foo" }}, $_[0]};
+  
+      package Fuz;                       # a weird REF-REF-SCALAR object
+      sub new {bless \($_ = \ 'fu\'z'), $_[0]};
+  
+      package main;
+      $foo = Foo->new;
+      $fuz = Fuz->new;
+      $boo = [ 1, [], "abcd", \*foo,
+               {1 => 'a', 023 => 'b', 0x45 => 'c'}, 
+               \\"p\q\'r", $foo, $fuz];
+  
+      ########
+      # simple usage
+      ########
+  
+      $bar = eval(Dumper($boo));
+      print($@) if $@;
+      print Dumper($boo), Dumper($bar);  # pretty print (no array indices)
+  
+      $Data::Dumper::Terse = 1;          # don't output names where feasible
+      $Data::Dumper::Indent = 0;         # turn off all pretty print
+      print Dumper($boo), "\n";
+  
+      $Data::Dumper::Indent = 1;         # mild pretty print
+      print Dumper($boo);
+  
+      $Data::Dumper::Indent = 3;         # pretty print with array indices
+      print Dumper($boo);
+  
+      $Data::Dumper::Useqq = 1;          # print strings in double quotes
+      print Dumper($boo);
+  
+      $Data::Dumper::Pair = " : ";       # specify hash key/value separator
+      print Dumper($boo);
+  
+  
+      ########
+      # recursive structures
+      ########
+  
+      @c = ('c');
+      $c = \@c;
+      $b = {};
+      $a = [1, $b, $c];
+      $b->{a} = $a;
+      $b->{b} = $a->[1];
+      $b->{c} = $a->[2];
+      print Data::Dumper->Dump([$a,$b,$c], [qw(a b c)]);
+  
+  
+      $Data::Dumper::Purity = 1;         # fill in the holes for eval
+      print Data::Dumper->Dump([$a, $b], [qw(*a b)]); # print as @a
+      print Data::Dumper->Dump([$b, $a], [qw(*b a)]); # print as %b
+  
+  
+      $Data::Dumper::Deepcopy = 1;       # avoid cross-refs
+      print Data::Dumper->Dump([$b, $a], [qw(*b a)]);
+  
+  
+      $Data::Dumper::Purity = 0;         # avoid cross-refs
+      print Data::Dumper->Dump([$b, $a], [qw(*b a)]);
+  
+      ########
+      # deep structures
+      ########
+  
+      $a = "pearl";
+      $b = [ $a ];
+      $c = { 'b' => $b };
+      $d = [ $c ];
+      $e = { 'd' => $d };
+      $f = { 'e' => $e };
+      print Data::Dumper->Dump([$f], [qw(f)]);
+  
+      $Data::Dumper::Maxdepth = 3;       # no deeper than 3 refs down
+      print Data::Dumper->Dump([$f], [qw(f)]);
+  
+  
+      ########
+      # object-oriented usage
+      ########
+  
+      $d = Data::Dumper->new([$a,$b], [qw(a b)]);
+      $d->Seen({'*c' => $c});            # stash a ref without printing it
+      $d->Indent(3);
+      print $d->Dump;
+      $d->Reset->Purity(0);              # empty the seen cache
+      print join "----\n", $d->Dump;
+  
+  
+      ########
+      # persistence
+      ########
+  
+      package Foo;
+      sub new { bless { state => 'awake' }, shift }
+      sub Freeze {
+          my $s = shift;
+  	print STDERR "preparing to sleep\n";
+  	$s->{state} = 'asleep';
+  	return bless $s, 'Foo::ZZZ';
+      }
+  
+      package Foo::ZZZ;
+      sub Thaw {
+          my $s = shift;
+  	print STDERR "waking up\n";
+  	$s->{state} = 'awake';
+  	return bless $s, 'Foo';
+      }
+  
+      package Foo;
+      use Data::Dumper;
+      $a = Foo->new;
+      $b = Data::Dumper->new([$a], ['c']);
+      $b->Freezer('Freeze');
+      $b->Toaster('Thaw');
+      $c = $b->Dump;
+      print $c;
+      $d = eval $c;
+      print Data::Dumper->Dump([$d], ['d']);
+  
+  
+      ########
+      # symbol substitution (useful for recreating CODE refs)
+      ########
+  
+      sub foo { print "foo speaking\n" }
+      *other = \&foo;
+      $bar = [ \&other ];
+      $d = Data::Dumper->new([\&other,$bar],['*other','bar']);
+      $d->Seen({ '*foo' => \&foo });
+      print $d->Dump;
+  
+  
+      ########
+      # sorting and filtering hash keys
+      ########
+  
+      $Data::Dumper::Sortkeys = \&my_filter;
+      my $foo = { map { (ord, "$_$_$_") } 'I'..'Q' };
+      my $bar = { %$foo };
+      my $baz = { reverse %$foo };
+      print Dumper [ $foo, $bar, $baz ];
+  
+      sub my_filter {
+          my ($hash) = @_;
+          # return an array ref containing the hash keys to dump
+          # in the order that you want them to be dumped
+          return [
+            # Sort the keys of %$foo in reverse numeric order
+              $hash eq $foo ? (sort {$b <=> $a} keys %$hash) :
+            # Only dump the odd number keys of %$bar
+              $hash eq $bar ? (grep {$_ % 2} keys %$hash) :
+            # Sort keys in default order for all other hashes
+              (sort keys %$hash)
+          ];
+      }
+  
+  =head1 BUGS
+  
+  Due to limitations of Perl subroutine call semantics, you cannot pass an
+  array or hash.  Prepend it with a C<\> to pass its reference instead.  This
+  will be remedied in time, now that Perl has subroutine prototypes.
+  For now, you need to use the extended usage form, and prepend the
+  name with a C<*> to output it as a hash or array.
+  
+  C<Data::Dumper> cheats with CODE references.  If a code reference is
+  encountered in the structure being processed (and if you haven't set
+  the C<Deparse> flag), an anonymous subroutine that
+  contains the string '"DUMMY"' will be inserted in its place, and a warning
+  will be printed if C<Purity> is set.  You can C<eval> the result, but bear
+  in mind that the anonymous sub that gets created is just a placeholder.
+  Someday, perl will have a switch to cache-on-demand the string
+  representation of a compiled piece of code, I hope.  If you have prior
+  knowledge of all the code refs that your data structures are likely
+  to have, you can use the C<Seen> method to pre-seed the internal reference
+  table and make the dumped output point to them, instead.  See L</EXAMPLES>
+  above.
+  
+  The C<Useqq> and C<Deparse> flags makes Dump() run slower, since the
+  XSUB implementation does not support them.
+  
+  SCALAR objects have the weirdest looking C<bless> workaround.
+  
+  Pure Perl version of C<Data::Dumper> escapes UTF-8 strings correctly
+  only in Perl 5.8.0 and later.
+  
+  =head2 NOTE
+  
+  Starting from Perl 5.8.1 different runs of Perl will have different
+  ordering of hash keys.  The change was done for greater security,
+  see L<perlsec/"Algorithmic Complexity Attacks">.  This means that
+  different runs of Perl will have different Data::Dumper outputs if
+  the data contains hashes.  If you need to have identical Data::Dumper
+  outputs from different runs of Perl, use the environment variable
+  PERL_HASH_SEED, see L<perlrun/PERL_HASH_SEED>.  Using this restores
+  the old (platform-specific) ordering: an even prettier solution might
+  be to use the C<Sortkeys> filter of Data::Dumper.
+  
+  =head1 AUTHOR
+  
+  Gurusamy Sarathy        gsar@activestate.com
+  
+  Copyright (c) 1996-98 Gurusamy Sarathy. All rights reserved.
+  This program is free software; you can redistribute it and/or
+  modify it under the same terms as Perl itself.
+  
+  =head1 VERSION
+  
+  Version 2.125  (Aug  8 2009)
+  
+  =head1 SEE ALSO
+  
+  perl(1)
+  
+  =cut
+I386-LINUX-THREAD-MULTI_DATA_DUMPER
+
 $fatpacked{"i386-linux-thread-multi/List/Util.pm"} = <<'I386-LINUX-THREAD-MULTI_LIST_UTIL';
   # List::Util.pm
   #
@@ -5048,21 +13817,92 @@ use POSIX qw( strftime );
 use Getopt::Long;
 use IO::Socket;
 use File::ReadBackwards;
+use Regexp::Common qw/ net URI /;
 use Net::Address::IP::Local;
+use Data::Dumper;
 
 my $O_ERROR = '';
-my $SENDER = 'native';
+my ($re_ipv4, $re_domain) = ($RE{net}{IPv4}, $RE{net}{domain}{-nospace});
+my $re_uri = qr/[^ ]+/ixsm;
+my $re_msec = qr/\d{10}\.\d{3}/ixsm;
+my $re_status = qr/\d{3}|-/ixsm;
+my $re_cost = qr/(?:\d+\.\d+|-)/ixsm;
+my $re_error = qr/(?:5\d{2})/ixsm; # 目前仅认为5xx是错误，400不算
+my $re_static = qr/\.(?:gif|png|jpg|jpeg|js|css|swf)/ixsm;
+
+# my $str = 'cas.sdo.com';
+# print "$1\n" if $str =~ /($re_domain)/; exit;
+
+# supported tag
+# upstream=ip
+# host=dns_name
+# error_rate
+
+# web.error.dynamic.5min
+# web.error.total.5min
+# web.latency.dynamic.5min
+# web.latency.total.5min
+# web.throughput.dynamic.5min
+# web.throughput.total.5min
 
 sub parse_http_nginx_v2 {
     my ($timefrm, $logfile) = @_;
 
-    open my $fh, '<', $logfile;
+    my $stop = time - $timefrm;
 
-    if ($fh) {
+    my ($rc_dynamic, $rc_total);
 
+    my $bw = File::ReadBackwards->new($logfile);
+    if ($bw) {
+        BACKWARD_READ:
+        while (defined (my $line = $bw->readline)) {
+            chomp $line;
+
+            if ($line =~ /^($re_msec) \s+ ($re_domain|$re_ipv4) \s+ ($re_uri) \s+ ($re_status) \s+ ($re_ipv4:\d+|-) \s+ ($re_cost|-)/ixsm) {
+                my ($msec, $domain, $uri, $status, $upstream, $cost) = ($1, $2, $3, $4, $5, $6);
+
+                if ($msec < $stop) {
+                    last BACKWARD_READ;
+                } else {
+                    $upstream =~ s/:\d+//g; # remove port
+                    if ($domain =~ $re_ipv4) {
+                        next BACKWARD_READ; # 当Host头为IP时，认为是无效的请求。
+                    } else {
+                        if ($upstream eq '-') {
+                            next BACKWARD_READ; # 如果upstream为空，表示已经被nginx缓存，相信nginx不会有错，所以不再计算。
+                        } else {
+                            # 如果是动态，先填充动态的结构。将动态与总计分开方便一点
+                            if ($uri !~ $re_static) {
+                                if ($status =~ /$re_error/) {
+                                    $rc_dynamic->{$domain}->{$upstream}->{error}++ ;
+                                } else {
+                                    unless (exists $rc_dynamic->{$domain}->{$upstream}->{error}) {
+                                        $rc_dynamic->{$domain}->{$upstream}->{error} = 0;
+                                    }
+                                }
+                                $rc_dynamic->{$domain}->{$upstream}->{latency} += $cost if $cost ne '-';
+                                $rc_dynamic->{$domain}->{$upstream}->{throughput}++;
+                            }
+
+                            if ($status =~ /$re_error/) {
+                                $rc_dynamic->{$domain}->{$upstream}->{error}++ ;
+                            } else {
+                                unless (exists $rc_dynamic->{$domain}->{$upstream}->{error}) {
+                                    $rc_dynamic->{$domain}->{$upstream}->{error} = 0;
+                                }
+                            }
+                            $rc_total->{$domain}->{$upstream}->{throughput} += $cost if $cost ne '-';
+                            $rc_total->{$domain}->{$upstream}->{total}++;
+                        }
+                    }
+                }
+            }
+        }
     } else {
         return undef;
     }
+
+    return ($rc_dynamic, $rc_total);
 }
 
 # 读取Nginx最后N行的日志，根据5xx的返回码，建立每个URL的情况，以及处理耗时。
@@ -5185,6 +14025,43 @@ sub prepare_metrics {
             return 0;
         }
     }
+    elsif ($type eq 'log-nginx-v2') {
+        my ($rc_dynamic, $rc_total)  = parse_http_nginx_v2($params->{last_n}, $params->{nginx_log});
+
+        my $interval = $params->{last_n};
+        my $metric_name;
+        if ($interval == 60) {
+            $metric_name = '1min';
+        } elsif ($interval == 300) {
+            $metric_name = '5min';
+        } else {
+            $metric_name = "${interval}sec";
+        }
+
+        if (defined $rc_dynamic && defined $rc_total) {
+            # 开始计算动态
+            foreach my $domain (keys %{$rc_dynamic}) {
+                foreach my $upstream (keys %{$rc_dynamic->{$domain}}) {
+                    foreach my $item (keys %{$rc_dynamic->{$domain}->{$upstream}}) {
+                        if ($item ne 'latency') { # 耗时的算法和其他不同
+                            $results .= sprintf("put nginx.%s.dynamic.%s %d %d host=%s domain=%s upstream=%s\n",
+                                $item, $metric_name, time(), $rc_dynamic->{$domain}->{$upstream}->{$item},
+                                $target, $domain, $upstream); # 这是开始是tag
+                        } else {
+                            # latency返回毫秒数
+                            # 总耗时除以总请求数
+                            $results .= sprintf("put nginx.%s.dynamic.%s %d %d host=%s domain=%s upstream=%s\n",
+                                $item, $metric_name, time(),
+                                $rc_dynamic->{$domain}->{$upstream}->{$item}/$rc_dynamic->{$domain}->{$upstream}->{throughput}*1000,
+                                $target, $domain, $upstream); # 这是开始是tag
+                        }
+                    }
+                }
+            }
+        } else {
+            return 0;
+        }
+    }
     else {
         return 0;
     }
@@ -5206,27 +14083,20 @@ sub send_metrics {
 
     my $rc = 0;
 
-    if ($SENDER eq 'nc') {
-        my $cmd = "echo $results | nc -w 10 $ocollector_daemon $ocollector_port";
-        printf("%s\t%s\n", strftime("%Y-%m-%d %H:%M:%S", localtime), $cmd);
-        system $cmd;
-    }
-    else {
-        # send directly through IO::Socket, low dependency thus the default way
-        my $sock = IO::Socket::INET->new(
-            PeerAddr => $ocollector_daemon,
-            PeerPort => $ocollector_port,
-            Proto    => $ocollector_proto,
-        );
+    # send directly through IO::Socket
+    my $sock = IO::Socket::INET->new(
+        PeerAddr => $ocollector_daemon,
+        PeerPort => $ocollector_port,
+        Proto    => $ocollector_proto,
+    );
 
-        unless ($sock) {
-            $O_ERROR = "create ${ocollector_daemon}:$ocollector_port failed";
-            return 0;
-        }
-
-        print {$sock} $results;
-        close $sock;
+    unless ($sock) {
+        $O_ERROR = "create ${ocollector_daemon}:$ocollector_port failed";
+        return 0;
     }
+
+    print {$sock} $results;
+    close $sock;
 
     return 1;
 }
@@ -5268,7 +14138,7 @@ sub main {
         usage;
         exit 0;
     }
-    my $supported = 'diskstats|tcpbasics|log-nginx-v1';
+    my $supported = 'diskstats|tcpbasics|log-nginx-v1|log-nginx-v2';
 
     if (!$ocollector_type) {
         usage();
@@ -5293,6 +14163,7 @@ sub main {
     for (;;) {
         # 只有metrics生成成功才发送，保证tsd那端不会受到乱七八糟的东西。
         if (my $results = prepare_metrics($ocollector_target, $ocollector_type, $params)) {
+            #print $results; exit;
             if (send_metrics($results, $ocollector_daemon, $ocollector_port)) {
                 if ($ocollector_verbose) {
                     log_succeed("send_metrics() succeed:\n$results");
@@ -5307,7 +14178,14 @@ sub main {
             log_exception('prepare_metrics');
         }
 
-        sleep($ocollector_interval);
+        # 取前N秒的时候，多sleep一会。
+        # 处理500多请求/秒 1min的数据需要5秒，也就是1/12。
+        # 因此sleep时间为 间隔 + 间隔*1/24 + 随机值
+        if ($ocollector_type eq 'log-nginx-v2') {
+            sleep($ocollector_log_lines + $ocollector_log_lines/12 + 5);
+        } else {
+            sleep($ocollector_interval);
+        }
     }
 }
 
