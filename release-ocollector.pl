@@ -3899,6 +3899,1131 @@ $fatpacked{"Getopt/Long.pm"} = <<'GETOPT_LONG';
   
 GETOPT_LONG
 
+$fatpacked{"Net/Address/IP/Local.pm"} = <<'NET_ADDRESS_IP_LOCAL';
+  #
+  # Net::Address::IP::Local class,
+  # a class for discovering the local system's IP address.
+  #
+  # (C) 2005-2009 Julian Mehnle <julian@mehnle.net>
+  # $Id: Local.pm 24 2009-01-14 21:23:40Z julian $
+  #
+  ###############################################################################
+  
+  =head1 NAME
+  
+  Net::Address::IP::Local - A class for discovering the local system's IP address
+  
+  =cut
+  
+  package Net::Address::IP::Local;
+  
+  =head1 VERSION
+  
+  0.1.2
+  
+  =cut
+  
+  use version; our $VERSION = qv('0.1.2');
+  
+  use warnings;
+  use strict;
+  
+  use Error ':try';
+  
+  use constant TRUE   => (0 == 0);
+  use constant FALSE  => not TRUE;
+  
+  use constant remote_address_ipv4_default => '198.41.0.4';           # a.root-servers.net
+  use constant remote_address_ipv6_default => '2001:503:ba3e::2:30';  # a.root-servers.net
+  
+  use constant remote_port_default         => 53;                     # DNS
+  
+  =head1 SYNOPSIS
+  
+      use Net::Address::IP::Local;
+      
+      # Get the local system's IP address that is "en route" to "the internet":
+      my $address      = Net::Address::IP::Local->public;
+      my $address_ipv4 = Net::Address::IP::Local->public_ipv4;
+      my $address_ipv6 = Net::Address::IP::Local->public_ipv6;
+      
+      # Get the local system's IP address that is "en route" to the given remote
+      # IP address:
+      my $address = Net::Address::IP::Local->connected_to($remote_address);
+  
+  =head1 DESCRIPTION
+  
+  B<Net::Address::IP::Local> discovers the local system's IP address that would
+  be used as the source address when contacting "the internet" or a certain
+  specified remote IP address.
+  
+  =cut
+  
+  # Implementation:
+  ###############################################################################
+  
+  =head2 Class methods
+  
+  This class just provides the following class methods:
+  
+  =over
+  
+  =item B<public>: returns I<string>; throws I<Net::Address::IP::Local::Error>
+  
+  Returns the textual representation of the local system's IP address that is
+  "en route" to "the internet".  If the system supports IPv6 and has an IPv6
+  address that is "en route" to "the internet", that is returned.  Otherwise, the
+  IPv4 address that is "en route" to "the internet" is returned.  If there is no
+  route at all to the internet, a I<Net::Address::IP::Local::Error> exception is
+  thrown.
+  
+  =cut
+  
+  sub public {
+      my ($class) = @_;
+      
+      return $class->connected_to($class->remote_address_ipv4_default)
+          if not $class->ipv6_support;
+          # Short-cut for the common case with no IPv6 support.
+      
+      my $ip_address;
+      
+      try {
+          $ip_address = $class->connected_to($class->remote_address_ipv6_default);
+      }
+      catch Net::Address::IP::Local::Error with {
+          my $error = shift;
+          try {
+              $ip_address = $class->connected_to($class->remote_address_ipv4_default);
+          }
+          catch Net::Address::IP::Local::Error with {
+              # If neither the IPv4 nor IPv6 local address could be determined,
+              # re-throw the first error that occurred:
+              $error->throw;
+          };
+      };
+      
+      return $ip_address;
+  }
+  
+  =item B<public_ipv4>: returns I<string>; throws I<Net::Address::IP::Local::Error>
+  
+  Returns the textual representation of the local system's IPv4 address that is "en
+  route" to "the internet".  If there is no IPv4 route to the internet, a
+  I<Net::Address::IP::Local::Error> exception is thrown.
+  
+  =cut
+  
+  sub public_ipv4 {
+      my ($class) = @_;
+      $class->ipv4_support
+          or throw Net::Address::IP::Local::Error("IPv4 not supported");
+      return $class->connected_to($class->remote_address_ipv4_default);
+  }
+  
+  =item B<public_ipv6>: returns I<string>; throws I<Net::Address::IP::Local::Error>
+  
+  Returns the textual representation of the local system's IPv6 address that is "en
+  route" to "the internet".  If there is no IPv6 route to the internet, a
+  I<Net::Address::IP::Local::Error> exception is thrown.
+  
+  =cut
+  
+  sub public_ipv6 {
+      my ($class) = @_;
+      $class->ipv6_support
+          or throw Net::Address::IP::Local::Error("IPv6 not supported");
+      return $class->connected_to($class->remote_address_ipv6_default);
+  }
+  
+  =item B<connected_to($remote_address)>: returns I<string>; throws
+  I<Net::Address::IP::Local::Error>
+  
+  Returns the textual representation of the local system's IP address that is "en
+  route" to the given remote IP address.  If there is no route to the given
+  remote IP address, a I<Net::Address::IP::Local::Error> exception is thrown.
+  
+  =cut
+  
+  sub connected_to {
+      my ($class, $remote_address) = @_;
+      
+      my $socket_class;
+      if ($class->ipv6_support) {
+          $socket_class = 'IO::Socket::INET6';
+      }
+      elsif ($class->ipv4_support) {
+          $socket_class = 'IO::Socket::INET';
+      }
+      else {
+          throw Net::Address::IP::Local::Error("Neither IPv4 nor IPv6 supported");
+      }
+      
+      my $socket = $socket_class->new(
+          Proto       => 'udp',
+          PeerAddr    => $remote_address,
+          PeerPort    => $class->remote_port_default
+      );
+      
+      defined($socket)
+          or throw Net::Address::IP::Local::Error("Unable to create UDP socket: $!");
+      
+      return $socket->sockhost;
+  }
+  
+  =back
+  
+  =cut
+  
+  # Private helper methods:
+  
+  my $ipv4_support;
+  
+  sub ipv4_support {
+      if (not defined($ipv4_support)) {
+          eval { require IO::Socket::INET };
+          $ipv4_support = not $@;
+      }
+      return $ipv4_support;
+  }
+  
+  my $ipv6_support;
+  
+  sub ipv6_support {
+      if (not defined($ipv6_support)) {
+          eval { require IO::Socket::INET6 };
+          $ipv6_support = not $@;
+      }
+      return $ipv6_support;
+  }
+  
+  =head1 AVAILABILITY and SUPPORT
+  
+  The latest version of Net::Address::IP::Local is available on CPAN and at
+  L<http://www.mehnle.net/software/net-address-ip-local-perl>.
+  
+  Support is usually (but not guaranteed to be) given by the author, Julian
+  Mehnle <julian@mehnle.net>.
+  
+  =head1 AUTHOR and LICENSE
+  
+  Net::Address::IP::Local is Copyright (C) 2005-2009 Julian Mehnle
+  <julian@mehnle.net>.
+  
+  Net::Address::IP::Local is free software.  You may use, modify, and distribute
+  it under the same terms as Perl itself, i.e. under the GNU GPL or the Artistic
+  License.
+  
+  =cut
+  
+  package Net::Address::IP::Local::Error;
+  use base qw(Error::Simple);
+  
+  package Net::Address::IP::Local;
+  
+  TRUE;
+NET_ADDRESS_IP_LOCAL
+
+$fatpacked{"i386-linux-thread-multi/List/Util.pm"} = <<'I386-LINUX-THREAD-MULTI_LIST_UTIL';
+  # List::Util.pm
+  #
+  # Copyright (c) 1997-2009 Graham Barr <gbarr@pobox.com>. All rights reserved.
+  # This program is free software; you can redistribute it and/or
+  # modify it under the same terms as Perl itself.
+  #
+  # This module is normally only loaded if the XS module is not available
+  
+  package List::Util;
+  
+  use strict;
+  use vars qw(@ISA @EXPORT_OK $VERSION $XS_VERSION $TESTING_PERL_ONLY);
+  require Exporter;
+  
+  @ISA        = qw(Exporter);
+  @EXPORT_OK  = qw(first min max minstr maxstr reduce sum shuffle);
+  $VERSION    = "1.22";
+  $XS_VERSION = $VERSION;
+  $VERSION    = eval $VERSION;
+  
+  eval {
+    # PERL_DL_NONLAZY must be false, or any errors in loading will just
+    # cause the perl code to be tested
+    local $ENV{PERL_DL_NONLAZY} = 0 if $ENV{PERL_DL_NONLAZY};
+    eval {
+      require XSLoader;
+      XSLoader::load('List::Util', $XS_VERSION);
+      1;
+    } or do {
+      require DynaLoader;
+      local @ISA = qw(DynaLoader);
+      bootstrap List::Util $XS_VERSION;
+    };
+  } unless $TESTING_PERL_ONLY;
+  
+  
+  if (!defined &sum) {
+    require List::Util::PP;
+    List::Util::PP->import;
+  }
+  
+  1;
+  
+  __END__
+  
+  =head1 NAME
+  
+  List::Util - A selection of general-utility list subroutines
+  
+  =head1 SYNOPSIS
+  
+      use List::Util qw(first max maxstr min minstr reduce shuffle sum);
+  
+  =head1 DESCRIPTION
+  
+  C<List::Util> contains a selection of subroutines that people have
+  expressed would be nice to have in the perl core, but the usage would
+  not really be high enough to warrant the use of a keyword, and the size
+  so small such that being individual extensions would be wasteful.
+  
+  By default C<List::Util> does not export any subroutines. The
+  subroutines defined are
+  
+  =over 4
+  
+  =item first BLOCK LIST
+  
+  Similar to C<grep> in that it evaluates BLOCK setting C<$_> to each element
+  of LIST in turn. C<first> returns the first element where the result from
+  BLOCK is a true value. If BLOCK never returns true or LIST was empty then
+  C<undef> is returned.
+  
+      $foo = first { defined($_) } @list    # first defined value in @list
+      $foo = first { $_ > $value } @list    # first value in @list which
+                                            # is greater than $value
+  
+  This function could be implemented using C<reduce> like this
+  
+      $foo = reduce { defined($a) ? $a : wanted($b) ? $b : undef } undef, @list
+  
+  for example wanted() could be defined() which would return the first
+  defined value in @list
+  
+  =item max LIST
+  
+  Returns the entry in the list with the highest numerical value. If the
+  list is empty then C<undef> is returned.
+  
+      $foo = max 1..10                # 10
+      $foo = max 3,9,12               # 12
+      $foo = max @bar, @baz           # whatever
+  
+  This function could be implemented using C<reduce> like this
+  
+      $foo = reduce { $a > $b ? $a : $b } 1..10
+  
+  =item maxstr LIST
+  
+  Similar to C<max>, but treats all the entries in the list as strings
+  and returns the highest string as defined by the C<gt> operator.
+  If the list is empty then C<undef> is returned.
+  
+      $foo = maxstr 'A'..'Z'          # 'Z'
+      $foo = maxstr "hello","world"   # "world"
+      $foo = maxstr @bar, @baz        # whatever
+  
+  This function could be implemented using C<reduce> like this
+  
+      $foo = reduce { $a gt $b ? $a : $b } 'A'..'Z'
+  
+  =item min LIST
+  
+  Similar to C<max> but returns the entry in the list with the lowest
+  numerical value. If the list is empty then C<undef> is returned.
+  
+      $foo = min 1..10                # 1
+      $foo = min 3,9,12               # 3
+      $foo = min @bar, @baz           # whatever
+  
+  This function could be implemented using C<reduce> like this
+  
+      $foo = reduce { $a < $b ? $a : $b } 1..10
+  
+  =item minstr LIST
+  
+  Similar to C<min>, but treats all the entries in the list as strings
+  and returns the lowest string as defined by the C<lt> operator.
+  If the list is empty then C<undef> is returned.
+  
+      $foo = minstr 'A'..'Z'          # 'A'
+      $foo = minstr "hello","world"   # "hello"
+      $foo = minstr @bar, @baz        # whatever
+  
+  This function could be implemented using C<reduce> like this
+  
+      $foo = reduce { $a lt $b ? $a : $b } 'A'..'Z'
+  
+  =item reduce BLOCK LIST
+  
+  Reduces LIST by calling BLOCK, in a scalar context, multiple times,
+  setting C<$a> and C<$b> each time. The first call will be with C<$a>
+  and C<$b> set to the first two elements of the list, subsequent
+  calls will be done by setting C<$a> to the result of the previous
+  call and C<$b> to the next element in the list.
+  
+  Returns the result of the last call to BLOCK. If LIST is empty then
+  C<undef> is returned. If LIST only contains one element then that
+  element is returned and BLOCK is not executed.
+  
+      $foo = reduce { $a < $b ? $a : $b } 1..10       # min
+      $foo = reduce { $a lt $b ? $a : $b } 'aa'..'zz' # minstr
+      $foo = reduce { $a + $b } 1 .. 10               # sum
+      $foo = reduce { $a . $b } @bar                  # concat
+  
+  If your algorithm requires that C<reduce> produce an identity value, then
+  make sure that you always pass that identity value as the first argument to prevent
+  C<undef> being returned
+  
+    $foo = reduce { $a + $b } 0, @values;             # sum with 0 identity value
+  
+  =item shuffle LIST
+  
+  Returns the elements of LIST in a random order
+  
+      @cards = shuffle 0..51      # 0..51 in a random order
+  
+  =item sum LIST
+  
+  Returns the sum of all the elements in LIST. If LIST is empty then
+  C<undef> is returned.
+  
+      $foo = sum 1..10                # 55
+      $foo = sum 3,9,12               # 24
+      $foo = sum @bar, @baz           # whatever
+  
+  This function could be implemented using C<reduce> like this
+  
+      $foo = reduce { $a + $b } 1..10
+  
+  If your algorithm requires that C<sum> produce an identity of 0, then
+  make sure that you always pass C<0> as the first argument to prevent
+  C<undef> being returned
+  
+    $foo = sum 0, @values;
+  
+  =back
+  
+  =head1 KNOWN BUGS
+  
+  With perl versions prior to 5.005 there are some cases where reduce
+  will return an incorrect result. This will show up as test 7 of
+  reduce.t failing.
+  
+  =head1 SUGGESTED ADDITIONS
+  
+  The following are additions that have been requested, but I have been reluctant
+  to add due to them being very simple to implement in perl
+  
+    # One argument is true
+  
+    sub any { $_ && return 1 for @_; 0 }
+  
+    # All arguments are true
+  
+    sub all { $_ || return 0 for @_; 1 }
+  
+    # All arguments are false
+  
+    sub none { $_ && return 0 for @_; 1 }
+  
+    # One argument is false
+  
+    sub notall { $_ || return 1 for @_; 0 }
+  
+    # How many elements are true
+  
+    sub true { scalar grep { $_ } @_ }
+  
+    # How many elements are false
+  
+    sub false { scalar grep { !$_ } @_ }
+  
+  =head1 SEE ALSO
+  
+  L<Scalar::Util>, L<List::MoreUtils>
+  
+  =head1 COPYRIGHT
+  
+  Copyright (c) 1997-2007 Graham Barr <gbarr@pobox.com>. All rights reserved.
+  This program is free software; you can redistribute it and/or
+  modify it under the same terms as Perl itself.
+  
+  =cut
+I386-LINUX-THREAD-MULTI_LIST_UTIL
+
+$fatpacked{"i386-linux-thread-multi/List/Util/PP.pm"} = <<'I386-LINUX-THREAD-MULTI_LIST_UTIL_PP';
+  # List::Util::PP.pm
+  #
+  # Copyright (c) 1997-2009 Graham Barr <gbarr@pobox.com>. All rights reserved.
+  # This program is free software; you can redistribute it and/or
+  # modify it under the same terms as Perl itself.
+  
+  package List::Util::PP;
+  
+  use strict;
+  use warnings;
+  use vars qw(@ISA @EXPORT $VERSION $a $b);
+  require Exporter;
+  
+  @ISA     = qw(Exporter);
+  @EXPORT  = qw(first min max minstr maxstr reduce sum shuffle);
+  $VERSION = "1.22";
+  $VERSION = eval $VERSION;
+  
+  sub reduce (&@) {
+    my $code = shift;
+    require Scalar::Util;
+    my $type = Scalar::Util::reftype($code);
+    unless($type and $type eq 'CODE') {
+      require Carp;
+      Carp::croak("Not a subroutine reference");
+    }
+    no strict 'refs';
+  
+    return shift unless @_ > 1;
+  
+    use vars qw($a $b);
+  
+    my $caller = caller;
+    local(*{$caller."::a"}) = \my $a;
+    local(*{$caller."::b"}) = \my $b;
+  
+    $a = shift;
+    foreach (@_) {
+      $b = $_;
+      $a = &{$code}();
+    }
+  
+    $a;
+  }
+  
+  sub first (&@) {
+    my $code = shift;
+    require Scalar::Util;
+    my $type = Scalar::Util::reftype($code);
+    unless($type and $type eq 'CODE') {
+      require Carp;
+      Carp::croak("Not a subroutine reference");
+    }
+  
+    foreach (@_) {
+      return $_ if &{$code}();
+    }
+  
+    undef;
+  }
+  
+  
+  sub sum (@) { reduce { $a + $b } @_ }
+  
+  sub min (@) { reduce { $a < $b ? $a : $b } @_ }
+  
+  sub max (@) { reduce { $a > $b ? $a : $b } @_ }
+  
+  sub minstr (@) { reduce { $a lt $b ? $a : $b } @_ }
+  
+  sub maxstr (@) { reduce { $a gt $b ? $a : $b } @_ }
+  
+  sub shuffle (@) {
+    my @a=\(@_);
+    my $n;
+    my $i=@_;
+    map {
+      $n = rand($i--);
+      (${$a[$n]}, $a[$n] = $a[$i])[0];
+    } @_;
+  }
+  
+  1;
+I386-LINUX-THREAD-MULTI_LIST_UTIL_PP
+
+$fatpacked{"i386-linux-thread-multi/List/Util/XS.pm"} = <<'I386-LINUX-THREAD-MULTI_LIST_UTIL_XS';
+  package List::Util::XS;
+  use strict;
+  use vars qw($VERSION);
+  use List::Util;
+  
+  $VERSION = "1.22";           # FIXUP
+  $VERSION = eval $VERSION;    # FIXUP
+  
+  sub _VERSION { # FIXUP
+    require Carp;
+    Carp::croak("You need to install Scalar-List-Utils with a C compiler to ensure the XS is compiled")
+      if defined $_[1];
+    $VERSION;
+  }
+  
+  1;
+  __END__
+  
+  =head1 NAME
+  
+  List::Util::XS - Indicate if List::Util was compiled with a C compiler
+  
+  =head1 SYNOPSIS
+  
+      use List::Util::XS 1.20;
+  
+  =head1 DESCRIPTION
+  
+  C<List::Util::XS> can be used as a dependency to ensure List::Util was
+  installed using a C compiler and that the XS version is installed.
+  
+  During installation C<$List::Util::XS::VERSION> will be set to
+  C<undef> if the XS was not compiled.
+  
+  =head1 SEE ALSO
+  
+  L<Scalar::Util>, L<List::Util>, L<List::MoreUtils>
+  
+  =head1 COPYRIGHT
+  
+  Copyright (c) 2008 Graham Barr <gbarr@pobox.com>. All rights reserved.
+  This program is free software; you can redistribute it and/or
+  modify it under the same terms as Perl itself.
+  
+  =cut
+I386-LINUX-THREAD-MULTI_LIST_UTIL_XS
+
+$fatpacked{"i386-linux-thread-multi/Scalar/Util.pm"} = <<'I386-LINUX-THREAD-MULTI_SCALAR_UTIL';
+  # Scalar::Util.pm
+  #
+  # Copyright (c) 1997-2007 Graham Barr <gbarr@pobox.com>. All rights reserved.
+  # This program is free software; you can redistribute it and/or
+  # modify it under the same terms as Perl itself.
+  
+  package Scalar::Util;
+  
+  use strict;
+  use vars qw(@ISA @EXPORT_OK $VERSION @EXPORT_FAIL);
+  require Exporter;
+  require List::Util; # List::Util loads the XS
+  
+  @ISA       = qw(Exporter);
+  @EXPORT_OK = qw(blessed dualvar reftype weaken isweak tainted readonly openhandle refaddr isvstring looks_like_number set_prototype);
+  $VERSION    = "1.22";
+  $VERSION   = eval $VERSION;
+  
+  unless (defined &dualvar) {
+    # Load Pure Perl version if XS not loaded
+    require Scalar::Util::PP;
+    Scalar::Util::PP->import;
+    push @EXPORT_FAIL, qw(weaken isweak dualvar isvstring set_prototype);
+  }
+  
+  sub export_fail {
+    if (grep { /dualvar/ } @EXPORT_FAIL) { # no XS loaded
+      my $pat = join("|", @EXPORT_FAIL);
+      if (my ($err) = grep { /^($pat)$/ } @_ ) {
+        require Carp;
+        Carp::croak("$err is only available with the XS version of Scalar::Util");
+      }
+    }
+  
+    if (grep { /^(weaken|isweak)$/ } @_ ) {
+      require Carp;
+      Carp::croak("Weak references are not implemented in the version of perl");
+    }
+  
+    if (grep { /^(isvstring)$/ } @_ ) {
+      require Carp;
+      Carp::croak("Vstrings are not implemented in the version of perl");
+    }
+  
+    @_;
+  }
+  
+  sub openhandle ($) {
+    my $fh = shift;
+    my $rt = reftype($fh) || '';
+  
+    return defined(fileno($fh)) ? $fh : undef
+      if $rt eq 'IO';
+  
+    if (reftype(\$fh) eq 'GLOB') { # handle  openhandle(*DATA)
+      $fh = \(my $tmp=$fh);
+    }
+    elsif ($rt ne 'GLOB') {
+      return undef;
+    }
+  
+    (tied(*$fh) or defined(fileno($fh)))
+      ? $fh : undef;
+  }
+  
+  1;
+  
+  __END__
+  
+  =head1 NAME
+  
+  Scalar::Util - A selection of general-utility scalar subroutines
+  
+  =head1 SYNOPSIS
+  
+      use Scalar::Util qw(blessed dualvar isweak readonly refaddr reftype tainted
+                          weaken isvstring looks_like_number set_prototype);
+                          # and other useful utils appearing below
+  
+  =head1 DESCRIPTION
+  
+  C<Scalar::Util> contains a selection of subroutines that people have
+  expressed would be nice to have in the perl core, but the usage would
+  not really be high enough to warrant the use of a keyword, and the size
+  so small such that being individual extensions would be wasteful.
+  
+  By default C<Scalar::Util> does not export any subroutines. The
+  subroutines defined are
+  
+  =over 4
+  
+  =item blessed EXPR
+  
+  If EXPR evaluates to a blessed reference the name of the package
+  that it is blessed into is returned. Otherwise C<undef> is returned.
+  
+     $scalar = "foo";
+     $class  = blessed $scalar;           # undef
+  
+     $ref    = [];
+     $class  = blessed $ref;              # undef
+  
+     $obj    = bless [], "Foo";
+     $class  = blessed $obj;              # "Foo"
+  
+  =item dualvar NUM, STRING
+  
+  Returns a scalar that has the value NUM in a numeric context and the
+  value STRING in a string context.
+  
+      $foo = dualvar 10, "Hello";
+      $num = $foo + 2;                    # 12
+      $str = $foo . " world";             # Hello world
+  
+  =item isvstring EXPR
+  
+  If EXPR is a scalar which was coded as a vstring the result is true.
+  
+      $vs   = v49.46.48;
+      $fmt  = isvstring($vs) ? "%vd" : "%s"; #true
+      printf($fmt,$vs);
+  
+  =item isweak EXPR
+  
+  If EXPR is a scalar which is a weak reference the result is true.
+  
+      $ref  = \$foo;
+      $weak = isweak($ref);               # false
+      weaken($ref);
+      $weak = isweak($ref);               # true
+  
+  B<NOTE>: Copying a weak reference creates a normal, strong, reference.
+  
+      $copy = $ref;
+      $weak = isweak($copy);              # false
+  
+  =item looks_like_number EXPR
+  
+  Returns true if perl thinks EXPR is a number. See
+  L<perlapi/looks_like_number>.
+  
+  =item openhandle FH
+  
+  Returns FH if FH may be used as a filehandle and is open, or FH is a tied
+  handle. Otherwise C<undef> is returned.
+  
+      $fh = openhandle(*STDIN);		# \*STDIN
+      $fh = openhandle(\*STDIN);		# \*STDIN
+      $fh = openhandle(*NOTOPEN);		# undef
+      $fh = openhandle("scalar");		# undef
+      
+  =item readonly SCALAR
+  
+  Returns true if SCALAR is readonly.
+  
+      sub foo { readonly($_[0]) }
+  
+      $readonly = foo($bar);              # false
+      $readonly = foo(0);                 # true
+  
+  =item refaddr EXPR
+  
+  If EXPR evaluates to a reference the internal memory address of
+  the referenced value is returned. Otherwise C<undef> is returned.
+  
+      $addr = refaddr "string";           # undef
+      $addr = refaddr \$var;              # eg 12345678
+      $addr = refaddr [];                 # eg 23456784
+  
+      $obj  = bless {}, "Foo";
+      $addr = refaddr $obj;               # eg 88123488
+  
+  =item reftype EXPR
+  
+  If EXPR evaluates to a reference the type of the variable referenced
+  is returned. Otherwise C<undef> is returned.
+  
+      $type = reftype "string";           # undef
+      $type = reftype \$var;              # SCALAR
+      $type = reftype [];                 # ARRAY
+  
+      $obj  = bless {}, "Foo";
+      $type = reftype $obj;               # HASH
+  
+  =item set_prototype CODEREF, PROTOTYPE
+  
+  Sets the prototype of the given function, or deletes it if PROTOTYPE is
+  undef. Returns the CODEREF.
+  
+      set_prototype \&foo, '$$';
+  
+  =item tainted EXPR
+  
+  Return true if the result of EXPR is tainted
+  
+      $taint = tainted("constant");       # false
+      $taint = tainted($ENV{PWD});        # true if running under -T
+  
+  =item weaken REF
+  
+  REF will be turned into a weak reference. This means that it will not
+  hold a reference count on the object it references. Also when the reference
+  count on that object reaches zero, REF will be set to undef.
+  
+  This is useful for keeping copies of references , but you don't want to
+  prevent the object being DESTROY-ed at its usual time.
+  
+      {
+        my $var;
+        $ref = \$var;
+        weaken($ref);                     # Make $ref a weak reference
+      }
+      # $ref is now undef
+  
+  Note that if you take a copy of a scalar with a weakened reference,
+  the copy will be a strong reference.
+  
+      my $var;
+      my $foo = \$var;
+      weaken($foo);                       # Make $foo a weak reference
+      my $bar = $foo;                     # $bar is now a strong reference
+  
+  This may be less obvious in other situations, such as C<grep()>, for instance
+  when grepping through a list of weakened references to objects that may have
+  been destroyed already:
+  
+      @object = grep { defined } @object;
+  
+  This will indeed remove all references to destroyed objects, but the remaining
+  references to objects will be strong, causing the remaining objects to never
+  be destroyed because there is now always a strong reference to them in the
+  @object array.
+  
+  =back
+  
+  =head1 DIAGNOSTICS
+  
+  Module use may give one of the following errors during import.
+  
+  =over
+  
+  =item Weak references are not implemented in the version of perl
+  
+  The version of perl that you are using does not implement weak references, to use
+  C<isweak> or C<weaken> you will need to use a newer release of perl.
+  
+  =item Vstrings are not implemented in the version of perl
+  
+  The version of perl that you are using does not implement Vstrings, to use
+  C<isvstring> you will need to use a newer release of perl.
+  
+  =item C<NAME> is only available with the XS version of Scalar::Util
+  
+  C<Scalar::Util> contains both perl and C implementations of many of its functions
+  so that those without access to a C compiler may still use it. However some of the functions
+  are only available when a C compiler was available to compile the XS version of the extension.
+  
+  At present that list is: weaken, isweak, dualvar, isvstring, set_prototype
+  
+  =back
+  
+  =head1 KNOWN BUGS
+  
+  There is a bug in perl5.6.0 with UV's that are >= 1<<31. This will
+  show up as tests 8 and 9 of dualvar.t failing
+  
+  =head1 SEE ALSO
+  
+  L<List::Util>
+  
+  =head1 COPYRIGHT
+  
+  Copyright (c) 1997-2007 Graham Barr <gbarr@pobox.com>. All rights reserved.
+  This program is free software; you can redistribute it and/or modify it
+  under the same terms as Perl itself.
+  
+  Except weaken and isweak which are
+  
+  Copyright (c) 1999 Tuomas J. Lukka <lukka@iki.fi>. All rights reserved.
+  This program is free software; you can redistribute it and/or modify it
+  under the same terms as perl itself.
+  
+  =cut
+I386-LINUX-THREAD-MULTI_SCALAR_UTIL
+
+$fatpacked{"i386-linux-thread-multi/Scalar/Util/PP.pm"} = <<'I386-LINUX-THREAD-MULTI_SCALAR_UTIL_PP';
+  # Scalar::Util::PP.pm
+  #
+  # Copyright (c) 1997-2009 Graham Barr <gbarr@pobox.com>. All rights reserved.
+  # This program is free software; you can redistribute it and/or
+  # modify it under the same terms as Perl itself.
+  #
+  # This module is normally only loaded if the XS module is not available
+  
+  package Scalar::Util::PP;
+  
+  use strict;
+  use warnings;
+  use vars qw(@ISA @EXPORT $VERSION $recurse);
+  require Exporter;
+  use B qw(svref_2object);
+  
+  @ISA     = qw(Exporter);
+  @EXPORT  = qw(blessed reftype tainted readonly refaddr looks_like_number);
+  $VERSION = "1.22";
+  $VERSION = eval $VERSION;
+  
+  sub blessed ($) {
+    return undef unless length(ref($_[0]));
+    my $b = svref_2object($_[0]);
+    return undef unless $b->isa('B::PVMG');
+    my $s = $b->SvSTASH;
+    return $s->isa('B::HV') ? $s->NAME : undef;
+  }
+  
+  sub refaddr($) {
+    return undef unless length(ref($_[0]));
+  
+    my $addr;
+    if(defined(my $pkg = blessed($_[0]))) {
+      $addr .= bless $_[0], 'Scalar::Util::Fake';
+      bless $_[0], $pkg;
+    }
+    else {
+      $addr .= $_[0]
+    }
+  
+    $addr =~ /0x(\w+)/;
+    local $^W;
+    hex($1);
+  }
+  
+  {
+    my %tmap = qw(
+      B::HV HASH
+      B::AV ARRAY
+      B::CV CODE
+      B::IO IO
+      B::NULL SCALAR
+      B::NV SCALAR
+      B::PV SCALAR
+      B::GV GLOB
+      B::RV REF
+      B::REGEXP REGEXP
+    );
+  
+    sub reftype ($) {
+      my $r = shift;
+  
+      return undef unless length(ref($r));
+  
+      my $t = ref(svref_2object($r));
+  
+      return
+          exists $tmap{$t} ? $tmap{$t}
+        : length(ref($$r)) ? 'REF'
+        :                    'SCALAR';
+    }
+  }
+  
+  sub tainted {
+    local($@, $SIG{__DIE__}, $SIG{__WARN__});
+    local $^W = 0;
+    no warnings;
+    eval { kill 0 * $_[0] };
+    $@ =~ /^Insecure/;
+  }
+  
+  sub readonly {
+    return 0 if tied($_[0]) || (ref(\($_[0])) ne "SCALAR");
+  
+    local($@, $SIG{__DIE__}, $SIG{__WARN__});
+    my $tmp = $_[0];
+  
+    !eval { $_[0] = $tmp; 1 };
+  }
+  
+  sub looks_like_number {
+    local $_ = shift;
+  
+    # checks from perlfaq4
+    return 0 if !defined($_);
+    if (ref($_)) {
+      require overload;
+      return overload::Overloaded($_) ? defined(0 + $_) : 0;
+    }
+    return 1 if (/^[+-]?[0-9]+$/); # is a +/- integer
+    return 1 if (/^([+-]?)(?=[0-9]|\.[0-9])[0-9]*(\.[0-9]*)?([Ee]([+-]?[0-9]+))?$/); # a C float
+    return 1 if ($] >= 5.008 and /^(Inf(inity)?|NaN)$/i) or ($] >= 5.006001 and /^Inf$/i);
+  
+    0;
+  }
+  
+  
+  1;
+I386-LINUX-THREAD-MULTI_SCALAR_UTIL_PP
+
+$fatpacked{"i386-linux-thread-multi/version.pm"} = <<'I386-LINUX-THREAD-MULTI_VERSION';
+  #!perl -w
+  package version;
+  
+  use 5.005_04;
+  use strict;
+  
+  use vars qw(@ISA $VERSION $CLASS *declare *qv);
+  
+  $VERSION = 0.78;
+  
+  $CLASS = 'version';
+  
+  eval "use version::vxs $VERSION";
+  if ( $@ ) { # don't have the XS version installed
+      eval "use version::vpp $VERSION"; # don't tempt fate
+      die "$@" if ( $@ );
+      push @ISA, "version::vpp";
+      local $^W;
+      *version::qv = \&version::vpp::qv;
+      *version::declare = \&version::vpp::declare;
+      *version::_VERSION = \&version::vpp::_VERSION;
+      if ($] > 5.009001 && $] <= 5.010000) {
+  	no strict 'refs';
+  	*{'version::stringify'} = \*version::vpp::stringify;
+  	*{'version::(""'} = \*version::vpp::stringify;
+  	*{'version::new'} = \*version::vpp::new;
+      }
+  }
+  else { # use XS module
+      push @ISA, "version::vxs";
+      local $^W;
+      *version::declare = \&version::vxs::declare;
+      *version::qv = \&version::vxs::qv;
+      *version::_VERSION = \&version::vxs::_VERSION;
+      if ($] > 5.009001 && $] < 5.010000) {
+  	no strict 'refs';
+  	*{'version::stringify'} = \*version::vxs::stringify;
+  	*{'version::(""'} = \*version::vxs::stringify;
+      }
+      elsif ($] == 5.010000) {
+  	no strict 'refs';
+  	*{'version::stringify'} = \*version::vxs::stringify;
+  	*{'version::(""'} = \*version::vxs::stringify;
+  	*version::new = \&version::vxs::new;
+  	*version::parse = \&version::vxs::parse;
+      }
+  
+  }
+  
+  # Preloaded methods go here.
+  sub import {
+      no strict 'refs';
+      my ($class) = shift;
+  
+      # Set up any derived class
+      unless ($class eq 'version') {
+  	local $^W;
+  	*{$class.'::declare'} =  \&version::declare;
+  	*{$class.'::qv'} = \&version::qv;
+      }
+  
+      my %args;
+      if (@_) { # any remaining terms are arguments
+  	map { $args{$_} = 1 } @_
+      }
+      else { # no parameters at all on use line
+      	%args = 
+  	(
+  	    qv => 1,
+  	    'UNIVERSAL::VERSION' => 1,
+  	);
+      }
+  
+      my $callpkg = caller();
+      
+      if (exists($args{declare})) {
+  	*{$callpkg."::declare"} = 
+  	    sub {return $class->declare(shift) }
+  	  unless defined(&{$callpkg.'::declare'});
+      }
+  
+      if (exists($args{qv})) {
+  	*{$callpkg."::qv"} =
+  	    sub {return $class->qv(shift) }
+  	  unless defined(&{"$callpkg\::qv"});
+      }
+  
+      if (exists($args{'UNIVERSAL::VERSION'})) {
+  	local $^W;
+  	*UNIVERSAL::VERSION 
+  		= \&version::_VERSION;
+      }
+  
+      if (exists($args{'VERSION'})) {
+  	*{$callpkg."::VERSION"} = \&version::_VERSION;
+      }
+  }
+  
+  1;
+I386-LINUX-THREAD-MULTI_VERSION
+
+$fatpacked{"i386-linux-thread-multi/version/vxs.pm"} = <<'I386-LINUX-THREAD-MULTI_VERSION_VXS';
+  #!perl -w
+  package version::vxs;
+  
+  use 5.005_03;
+  use strict;
+  
+  use vars qw(@ISA $VERSION $CLASS );
+  
+  $VERSION = 0.78;
+  
+  $CLASS = 'version::vxs';
+  
+  eval {
+      require XSLoader;
+      local $^W; # shut up the 'redefined' warning for UNIVERSAL::VERSION
+      XSLoader::load('version::vxs', $VERSION);
+      1;
+  } or do {
+      require DynaLoader;
+      push @ISA, 'DynaLoader'; 
+      local $^W; # shut up the 'redefined' warning for UNIVERSAL::VERSION
+      bootstrap version::vxs $VERSION;
+  };
+  
+  # Preloaded methods go here.
+  
+  1;
+I386-LINUX-THREAD-MULTI_VERSION_VXS
+
 s/^  //mg for values %fatpacked;
 
 unshift @INC, sub {
@@ -3923,6 +5048,7 @@ use POSIX qw( strftime );
 use Getopt::Long;
 use IO::Socket;
 use File::ReadBackwards;
+use Net::Address::IP::Local;
 
 my $O_ERROR = '';
 my $SENDER = 'native';
@@ -4026,12 +5152,6 @@ sub get_diskstats {
     }
 
     return $rc;
-}
-
-sub get_ip {
-    my $output = `ifconfig eth0 | grep 'inet addr' | grep -o -P '\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}' | head -1`;
-    chomp $output;
-    return $output;
 }
 
 sub prepare_metrics {
@@ -4160,9 +5280,9 @@ sub main {
         1;
     }
 
-    # 如果不给出host，则取eth0的IP地址。 
+    # 如果不给出host，则自动获取IP
     if (!$ocollector_target) {
-        $ocollector_target = get_ip();
+        $ocollector_target = Net::Address::IP::Local->public_ipv4();
     }
 
     # 如果某种类型的collector需要参数，通过统一的params扔进去。

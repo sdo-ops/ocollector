@@ -10,6 +10,7 @@ use POSIX qw( strftime );
 use Getopt::Long;
 use IO::Socket;
 use File::ReadBackwards;
+use Net::Address::IP::Local;
 
 my $O_ERROR = '';
 my $SENDER = 'native';
@@ -113,12 +114,6 @@ sub get_diskstats {
     }
 
     return $rc;
-}
-
-sub get_ip {
-    my $output = `ifconfig eth0 | grep 'inet addr' | grep -o -P '\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}' | head -1`;
-    chomp $output;
-    return $output;
 }
 
 sub prepare_metrics {
@@ -247,9 +242,9 @@ sub main {
         1;
     }
 
-    # 如果不给出host，则取eth0的IP地址。 
+    # 如果不给出host，则自动获取IP
     if (!$ocollector_target) {
-        $ocollector_target = get_ip();
+        $ocollector_target = Net::Address::IP::Local->public_ipv4();
     }
 
     # 如果某种类型的collector需要参数，通过统一的params扔进去。
