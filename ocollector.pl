@@ -9,13 +9,16 @@ use File::Path;
 use POSIX qw( strftime );
 use Getopt::Long;
 use IO::Socket;
+use Error;
+use version;
 use File::ReadBackwards;
 use Regexp::Common qw/ net URI /;
 use Net::Address::IP::Local;
-use Data::Dumper;
+#use Data::Dumper;
 
 my $O_ERROR = '';
-my ($re_ipv4, $re_domain) = ($RE{net}{IPv4}, $RE{net}{domain}{-nospace});
+my $re_ipv4 = $RE{net}{IPv4};
+my $re_domain = qr/(?:[0-9A-Za-z](?:(?:[-A-Za-z0-9]){0,61}[A-Za-z0-9])?(?:\.[A-Za-z](?:(?:[-A-Za-z0-9]){0,61}[A-Za-z0-9])?)*)/ixsm;
 my $re_uri = qr/[^ ]+/ixsm;
 my $re_msec = qr/\d{10}\.\d{3}/ixsm;
 my $re_status = qr/\d{3}|-/ixsm;
@@ -231,22 +234,25 @@ sub prepare_metrics {
             $metric_name = "${interval}sec";
         }
 
+        my $virtualized = 'no';
+        $virtualized = 'yes' if $params->{virtual};
+
         if (defined $rc_dynamic && defined $rc_total) {
             # 开始计算动态
             foreach my $domain (keys %{$rc_dynamic}) {
                 foreach my $upstream (keys %{$rc_dynamic->{$domain}}) {
                     foreach my $item (keys %{$rc_dynamic->{$domain}->{$upstream}}) {
                         if ($item ne 'latency') { # 耗时的算法和其他不同
-                            $results .= sprintf("put nginx.%s.dynamic.%s %d %d host=%s domain=%s upstream=%s\n",
+                            $results .= sprintf("put nginx.%s.dynamic.%s %d %d host=%s domain=%s upstream=%s virtualized=%s\n",
                                 $item, $metric_name, time(), $rc_dynamic->{$domain}->{$upstream}->{$item},
-                                $target, $domain, $upstream); # 这是开始是tag
+                                $target, $domain, $upstream, $virtualized); # 这是开始是tag
                         } else {
                             # latency返回毫秒数
                             # 总耗时除以总请求数
-                            $results .= sprintf("put nginx.%s.dynamic.%s %d %d host=%s domain=%s upstream=%s\n",
+                            $results .= sprintf("put nginx.%s.dynamic.%s %d %d host=%s domain=%s upstream=%s virtualized=%s\n",
                                 $item, $metric_name, time(),
-                                $rc_dynamic->{$domain}->{$upstream}->{$item}/$rc_dynamic->{$domain}->{$upstream}->{throughput}*1000,
-                                $target, $domain, $upstream); # 这是开始是tag
+                                ($rc_dynamic->{$domain}->{$upstream}->{$item}/$rc_dynamic->{$domain}->{$upstream}->{throughput})*1000,
+                                $target, $domain, $upstream, $virtualized); # 这是开始是tag
                         }
                     }
                 }
@@ -314,6 +320,7 @@ sub main {
     my $ocollector_nginx_log    = q{};
     my $ocollector_log_lines    = 500;
     my $ocollector_verbose      = 0;
+    my $ocollector_virtual      = 0;
     my $help;
 
     GetOptions("to=s" => \$ocollector_daemon,
@@ -323,6 +330,7 @@ sub main {
                "type=s" => \$ocollector_type,
                "nginx-log=s" => \$ocollector_nginx_log,
                "log-lines=s" => \$ocollector_log_lines,
+               "virtual" => \$ocollector_virtual,
                "verbose" => \$ocollector_verbose,
                "help" => \$help
                );
@@ -352,6 +360,7 @@ sub main {
     my $params;
     $params->{last_n}    = $ocollector_log_lines;
     $params->{nginx_log} = $ocollector_nginx_log;
+    $params->{virtual}   = $ocollector_virtual;
 
     for (;;) {
         # 只有metrics生成成功才发送，保证tsd那端不会受到乱七八糟的东西。
