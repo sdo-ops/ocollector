@@ -11,14 +11,14 @@ use Getopt::Long;
 use IO::Socket;
 use File::ReadBackwards;
 use Sys::Statistics::Linux::DiskUsage;
-
 #use Data::Dumper;
 
 # Hacked oneline to remove dependency on version module, which requires a XS file that we can't pack.
 use Net::Address::IP::Local;
 
 # GLOBALS
-my $O_ERROR = '';
+my $O_ERROR     = '';
+
 
 # Those regular expressions are stoled from Regex::Common
 # but zero-dependency is more important for us.
@@ -28,22 +28,24 @@ my $re_uri = qr/[^ ]+/ixsm;
 my $re_msec = qr/\d{10}\.\d{3}/ixsm;
 my $re_status = qr/\d{3}|-/ixsm;
 my $re_cost = qr/(?:\d+\.\d+|-)/ixsm;
-my $re_error = qr/(?:5\d{2})/ixsm; # 目前仅认为5xx是错误，400不算
+my $re_static_err = qr/(?:5\d{2}|404)/ixsm;
+my $re_dynamic_err = qr/(?:5\d{2})/ixsm;
 my $re_static = qr/\.(?:gif|png|jpg|jpeg|js|css|swf)/ixsm;
+
 
 sub flush_tmpfs {
     my $lxs = Sys::Statistics::Linux::DiskUsage->new;
     my $stat = $lxs->get;
-    my $threshold = 10;
+    my $threshold = 90;
 
     if (exists $stat->{tmpfs}) {
         my ($free, $total) = ($stat->{tmpfs}->{free}, $stat->{tmpfs}->{total});
 
         # 大小为0的tmpfs可能存在么？
         if ($total >= 0) {
-            my $left = sprintf("%.2f", ($total - $free)/$total*100);
+            my $used = sprintf("%.2f", ($total - $free)/$total*100);
             # 低于这点时开始flush 
-            if ($left <= $threshold) {
+            if ($used >= $threshold) {
                 return 1;
             }
         }
@@ -55,9 +57,9 @@ sub flush_tmpfs {
 sub parse_http_nginx_v2 {
     my ($timefrm, $logfile) = @_;
 
-    my $stop = time - $timefrm;
+    my $stop = time() - $timefrm;
 
-    my ($rc_dynamic, $rc_total);
+    my ($rc_dynamic, $rc_static);
 
     my $bw = File::ReadBackwards->new($logfile);
     if ($bw) {
@@ -75,31 +77,32 @@ sub parse_http_nginx_v2 {
                     if ($domain =~ $re_ipv4) {
                         next BACKWARD_READ; # 当Host头为IP时，认为是无效的请求。
                     } else {
-                        if ($upstream eq '-') {
-                            next BACKWARD_READ; # 如果upstream为空，表示已经被nginx缓存，相信nginx不会有错，所以不再计算。
-                        } else {
-                            # 如果是动态，先填充动态的结构。将动态与总计分开方便一点
-                            if ($uri !~ $re_static) {
-                                if ($status =~ /$re_error/) {
-                                    $rc_dynamic->{$domain}->{$upstream}->{error}++ ;
-                                } else {
-                                    unless (exists $rc_dynamic->{$domain}->{$upstream}->{error}) {
-                                        $rc_dynamic->{$domain}->{$upstream}->{error} = 0;
-                                    }
+                        if ($uri !~ $re_static) {
+                            if ($upstream eq '-') {
+                                next BACKWARD_READ; # 如果upstream为空，表示已经被nginx缓存，相信nginx不会有错，所以不再计算。
+                            } else {
+                                if ($status =~ /$re_dynamic_err/) {
+                                    $rc_dynamic->{$domain}->{$upstream}->{error}++;
                                 }
                                 $rc_dynamic->{$domain}->{$upstream}->{latency} += $cost if $cost ne '-';
                                 $rc_dynamic->{$domain}->{$upstream}->{throughput}++;
                             }
-
-                            if ($status =~ /$re_error/) {
-                                $rc_dynamic->{$domain}->{$upstream}->{error}++ ;
-                            } else {
-                                unless (exists $rc_dynamic->{$domain}->{$upstream}->{error}) {
-                                    $rc_dynamic->{$domain}->{$upstream}->{error} = 0;
-                                }
+                        } else {
+                            # nginx自己处理了请求
+                            if ($upstream eq '-') {
+                                $upstream = '0.0.0.0';
                             }
-                            $rc_total->{$domain}->{$upstream}->{throughput} += $cost if $cost ne '-';
-                            $rc_total->{$domain}->{$upstream}->{total}++;
+
+                            if ($status =~ /$re_static_err/) {
+                                $rc_static->{$domain}->{$upstream}->{error} = 0;
+                            }
+
+                            if ($cost eq '-') {
+                                $rc_static->{$domain}->{$upstream}->{latency} += 0;
+                            } else {
+                                $rc_static->{$domain}->{$upstream}->{latency} += $cost;
+                            }
+                            $rc_static->{$domain}->{$upstream}->{throughput}++;
                         }
                     }
                 }
@@ -109,7 +112,7 @@ sub parse_http_nginx_v2 {
         return undef;
     }
 
-    return ($rc_dynamic, $rc_total);
+    return ($rc_dynamic, $rc_static);
 }
 
 # 读取Nginx最后N行的日志，根据5xx的返回码，建立每个URL的情况，以及处理耗时。
@@ -132,13 +135,14 @@ sub parse_http_nginx_v1 {
 
 sub get_tcpbasic {
     my $output = `netstat -st`;
-    my $want_re = qr/((?:active\sconnections\sopenings)|(?:passive\sconnection\sopenings)|(?:failed\sconnection\sattempts)|(?:connection\sresets\sreceived))/ixsm;
+    my $want_re = qr/((?:active\sconnections\sopenings)|(?:passive\sconnection\sopenings)|(?:failed\sconnection\sattempts)|(?:connection\sresets\sreceived)|(?:connections\sestablished))/ixsm;
 
     #  Tcp:
     #      759262422 active connections openings
     #      118115924 passive connection openings
     #      2406493 failed connection attempts
     #      2227918 connection resets received
+    #      47 connections established
     my $rc;
     foreach (split /\n/, $output) {
         next unless $_ =~ $want_re;
@@ -153,7 +157,7 @@ sub get_tcpbasic {
         $rc->{$metric} = $count;
 
         # early break
-        if ($line =~ /connection\sresets\sreceived/ixsm) {
+        if ($line =~ /connections\sestablished/ixsm) {
             last;
         }
     }
@@ -210,8 +214,8 @@ sub prepare_metrics {
 
         foreach my $d (sort keys %{$rc}) {
             foreach my $item (sort keys %{$rc->{$d}}) {
-                $results .= sprintf("put diskstats.%s %d %d host=%s disk=%s\n",
-                    $item, time(), $rc->{$d}->{$item}, $target, $d);
+                $results .= sprintf("put linux.diskstats %d %d host=%s disk=%s item=%s virtualized=%s\n",
+                    time(), $rc->{$d}->{$item}, $target, $d, $item, $params->{virtual});
             }
         }
     }
@@ -219,7 +223,8 @@ sub prepare_metrics {
         my $rc= get_tcpbasic();
 
         foreach my $item (sort keys %{$rc}) {
-            $results .= sprintf("put tcpbasic.%s %d %d host=%s\n", $item, time(), $rc->{$item}, $target);
+            $results .= sprintf("put linux.netstat.tcp %d %d host=%s item=%s virtualized=%s\n",
+                    time(), $rc->{$item}, $target, $item, $params->{virtual});
         }
     }
     elsif ($type eq 'log-nginx-v1') {
@@ -233,17 +238,17 @@ sub prepare_metrics {
         }
     }
     elsif ($type eq 'log-nginx-v2') {
-
         # 如果不知道是不是在tmpfs上，我们也可以flush一下。
         # tmpfs少了，说不定就是我们引起的。
         if (flush_tmpfs()) {
             system '>' . $params->{nginx_log};
 
             # flush后日志为空，本次prepare_metrics失败。 
+            $O_ERROR = 'tmpfs flushed.';
             return 0;
         }
 
-        my ($rc_dynamic, $rc_total)  = parse_http_nginx_v2($params->{last_n}, $params->{nginx_log});
+        my ($rc_dynamic, $rc_static)  = parse_http_nginx_v2($params->{last_n}, $params->{nginx_log});
 
         my $interval = $params->{last_n};
         my $metric_name;
@@ -255,34 +260,65 @@ sub prepare_metrics {
             $metric_name = "${interval}sec";
         }
 
-        my $virtualized = 'no';
-        $virtualized = 'yes' if $params->{virtual};
-
-        if (defined $rc_dynamic && defined $rc_total) {
+        if (defined $rc_dynamic) {
             # 开始计算动态
             foreach my $domain (keys %{$rc_dynamic}) {
                 foreach my $upstream (keys %{$rc_dynamic->{$domain}}) {
+                    # 如果error没有，我们这里补个0上去
+                    unless (exists $rc_dynamic->{$domain}->{$upstream}->{error}) {
+                        $rc_dynamic->{$domain}->{$upstream}->{error} = 0;
+                    }
+
                     foreach my $item (keys %{$rc_dynamic->{$domain}->{$upstream}}) {
                         if ($item ne 'latency') { # 耗时的算法和其他不同
-                            $results .= sprintf("put nginx.%s.dynamic.%s %d %d host=%s domain=%s upstream=%s virtualized=%s\n",
-                                $item, $metric_name, time(), $rc_dynamic->{$domain}->{$upstream}->{$item},
-                                $target, $domain, $upstream, $virtualized); # 这是开始是tag
+                            $results .= sprintf("put nginx.%s %d %d interval=%s host=%s domain=%s upstream=%s virtualized=%s type=dynamic\n",
+                                $item, time(), $rc_dynamic->{$domain}->{$upstream}->{$item},
+                                $metric_name, $target, $domain, $upstream, $params->{virtual});
                         } else {
                             # latency返回毫秒数
                             # 总耗时除以总请求数
-                            $results .= sprintf("put nginx.%s.dynamic.%s %d %d host=%s domain=%s upstream=%s virtualized=%s\n",
-                                $item, $metric_name, time(),
+                            $results .= sprintf("put nginx.%s %d %d interval=%s host=%s domain=%s upstream=%s virtualized=%s type=dynamic\n",
+                                $item, time(),
                                 ($rc_dynamic->{$domain}->{$upstream}->{$item}/$rc_dynamic->{$domain}->{$upstream}->{throughput})*1000,
-                                $target, $domain, $upstream, $virtualized); # 这是开始是tag
+                                $metric_name, $target, $domain, $upstream, $params->{virtual});
+                        }
+                    }
+                }
+            }
+            
+            # 对于接口类型网站，没有static
+            if (defined $rc_static) {
+                # 开始计算静态
+                foreach my $domain (keys %{$rc_static}) {
+                    foreach my $upstream (keys %{$rc_static->{$domain}}) {
+                        unless (exists $rc_static->{$domain}->{$upstream}->{error}) {
+                            $rc_static->{$domain}->{$upstream}->{error} = 0;
+                        }
+
+                        foreach my $item (keys %{$rc_static->{$domain}->{$upstream}}) {
+                            if ($item ne 'latency') { # 耗时的算法和其他不同
+                                $results .= sprintf("put nginx.%s %d %d interval=%s host=%s domain=%s upstream=%s virtualized=%s type=static\n",
+                                    $item, time(), $rc_static->{$domain}->{$upstream}->{$item},
+                                    $metric_name, $target, $domain, $upstream, $params->{virtual});
+                            } else {
+                                # latency返回毫秒数
+                                # 总耗时除以总请求数
+                                $results .= sprintf("put nginx.%s %d %d interval=%s host=%s domain=%s upstream=%s virtualized=%s type=static\n",
+                                    $item, time(),
+                                    ($rc_static->{$domain}->{$upstream}->{$item}/$rc_static->{$domain}->{$upstream}->{throughput})*1000,
+                                    $metric_name, $target, $domain, $upstream, $params->{virtual});
+                            }
                         }
                     }
                 }
             }
         } else {
+            $O_ERROR = 'empty parse_http_nginx_v2()';
             return 0;
         }
     }
     else {
+        $O_ERROR = 'impossible';
         return 0;
     }
 
@@ -332,6 +368,7 @@ sub log_exception {
 }
 
 sub main {
+    # options
     my $ocollector_daemon       = 'op.sdo.com';
     my $ocollector_port         = 4242;
     my $ocollector_proto        = 'tcp';
@@ -339,9 +376,9 @@ sub main {
     my $ocollector_target       = q{};
     my $ocollector_type         = q{};
     my $ocollector_nginx_log    = q{};
-    my $ocollector_log_lines    = 500;
-    my $ocollector_verbose      = 0;
-    my $ocollector_virtual      = 0;
+    my $ocollector_log_lines    = q{};
+    my $ocollector_verbose      = q{};
+    my $ocollector_virtual      = q{};
     my $help;
 
     GetOptions("to=s" => \$ocollector_daemon,
@@ -360,6 +397,7 @@ sub main {
         usage;
         exit 0;
     }
+
     my $supported = 'diskstats|tcpbasics|log-nginx-v1|log-nginx-v2';
 
     if (!$ocollector_type) {
@@ -377,11 +415,21 @@ sub main {
         $ocollector_target = Net::Address::IP::Local->public_ipv4();
     }
 
+    # 如果没有指定，默认取前1分钟以及/dev/shm下的日志
+    if ($ocollector_type eq 'log-nginx-v2') {
+        $ocollector_log_lines = 60 unless $ocollector_log_lines;
+        $ocollector_nginx_log = '/dev/shm/nginx_metrics/metrics.log' unless $ocollector_nginx_log;
+        $ocollector_interval = 60 unless $ocollector_interval == 15;
+    }
+
     # 如果某种类型的collector需要参数，通过统一的params扔进去。
     my $params;
+
     $params->{last_n}    = $ocollector_log_lines;
     $params->{nginx_log} = $ocollector_nginx_log;
-    $params->{virtual}   = $ocollector_virtual;
+
+    $params->{virtual}   = 'no' unless $ocollector_virtual;
+
 
     for (;;) {
         # 只有metrics生成成功才发送，保证tsd那端不会受到乱七八糟的东西。
@@ -401,14 +449,7 @@ sub main {
             log_exception('prepare_metrics');
         }
 
-        # 取前N秒的时候，多sleep一会。
-        # 处理500多请求/秒 1min的数据需要5秒，也就是1/12。
-        # 因此sleep时间为 间隔 + 间隔*1/24 + 随机值
-        if ($ocollector_type eq 'log-nginx-v2') {
-            sleep($ocollector_log_lines + $ocollector_log_lines/12 + 5);
-        } else {
-            sleep($ocollector_interval);
-        }
+        sleep($ocollector_interval);
     }
 }
 
