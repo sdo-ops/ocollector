@@ -16,9 +16,15 @@ use Sys::Statistics::Linux::DiskUsage;
 # Hacked oneline to remove dependency on version module, which requires a XS file that we can't pack.
 use Net::Address::IP::Local;
 
+use constant WIN32 => $^O eq 'MSWin32';
+use constant SUNOS => $^O eq 'solaris';
+
+our $VERSION = "1.01";
+$VERSION = eval $VERSION;
+
+
 # GLOBALS
 my $O_ERROR     = '';
-
 
 # Those regular expressions are stoled from Regex::Common
 # but zero-dependency is more important for us.
@@ -326,12 +332,48 @@ sub prepare_metrics {
 }
 
 sub usage {
-    print "At minmum, you must provide the collector type, ";
-    print "e.,g ./ocollector --type=diskstats\n";
+    my $type = shift;
 
-    print "example1: ./ocollector --target=192.168.2.1 --type=diskstats\n";
-    print "example2: ./ocollector --interval=5 --type=tcpbasics\n";
-    print "example3: ./ocollector --type=log-nginx-v1 --nginx-log=access.log --log-lines=300\n";
+    if ($type == 1) {
+        die <<USAGE;
+Usage: ocollector [options] -t type
+
+Try `ocollector --help` or `ocollector -h` for more options.
+USAGE
+    }
+
+    die <<HELP;
+Usage: ocollector [options] -t type
+
+Options:
+    -v,--verbose                          Print the full collecting results
+    -q,--quiet                            Suppress all output even error messages
+    -h,--help                             Print this help
+    -o,--to                               Specify the address where metrics send to, default: op.sdo.com
+    -p,--port                             Specify the port where metrics got sent to, default: 4242
+    -i,--interval                         Number of seconds to wait before next send, default: 15
+    -a,--amount                           Read this amount of logs, only lines and seconds are recognized, default: 60
+    -l,--log                              The absolute path of the logfile to read from, default: /dev/shm/nginx_metrics/metrics.log
+    -r,--target                           An arbitrary string used to identify this host, default to one's ip
+    -u,--virtual                          Set this if the machine is a virtualized one, default: no
+    -t,--type                             Specify the collecting type, default: tcpbasics
+
+Types:
+    tcpbasics                             Basic tcp connection info from netstat -st
+    diskstats                             Disk devices stats from /proc/diskstats
+    log-nginx-v2                          Analyze customized nginx log: "\$msec \$host \$uri \$status \$upstream_addr \$upstream_response_time"
+
+Examples:
+    ocollector -v                                   # send tcpbasic stats to op.sdo.com every 15 seconds and print full results
+    ocollector -o metrics.sdo.com -p 3333           # send to metric.sdo.com:3333
+    ocollector -r mysql_master -t diskstats         # collect diskstats and identify the host by mysql_master 
+    ocollector -t diskstats -i 5                    # send diskstats to op.sdo.com every 5 seconds
+    ocollector -t tcpbasics --virtual               # tag the host as a virtualized one
+    ocollector -t log-nginx-v2 -a 30                # analyze nginx's metric log every 30 seconds
+
+HELP
+
+    return 1;
 }
 
 sub send_metrics {
@@ -369,6 +411,7 @@ sub log_exception {
 
 sub main {
     # options
+    my $ocollector_version      = q{};
     my $ocollector_daemon       = 'op.sdo.com';
     my $ocollector_port         = 4242;
     my $ocollector_proto        = 'tcp';
@@ -379,33 +422,40 @@ sub main {
     my $ocollector_log_lines    = q{};
     my $ocollector_verbose      = q{};
     my $ocollector_virtual      = q{};
-    my $help;
+    my $ocollector_quiet        = q{};
+    my $help                    = q{};;
 
-    GetOptions("to=s" => \$ocollector_daemon,
-               "interval=i" => \$ocollector_interval,
-               "port=i" => \$ocollector_port,
-               "target=s" => \$ocollector_target,
-               "type=s" => \$ocollector_type,
-               "nginx-log=s" => \$ocollector_nginx_log,
-               "log-lines=s" => \$ocollector_log_lines,
-               "virtual" => \$ocollector_virtual,
-               "verbose" => \$ocollector_verbose,
-               "help" => \$help
-               );
+    usage(1) if (@ARGV < 1);
 
-    if ($help) {
-        usage;
+    Getopt::Long::Configure("bundling");
+
+    usage(2) unless GetOptions(
+               "o|to=s" => \$ocollector_daemon,
+               "i|interval=i" => \$ocollector_interval,
+               "p|port=i" => \$ocollector_port,
+               "r|target=s" => \$ocollector_target,
+               "t|type=s" => \$ocollector_type,
+               "l|log=s" => \$ocollector_nginx_log,
+               "a|amount=i" => \$ocollector_log_lines,
+               "q|quiet" => \$ocollector_quiet,
+               "u|virtual" => \$ocollector_virtual,
+               "v|verbose" => \$ocollector_verbose,
+               "V|version" => \$ocollector_version,
+               "h|help" => \$help );
+
+    if ($ocollector_version) {
+        print "ocollector version: $VERSION\n";
         exit 0;
     }
+
+    usage(2) if $help;
 
     my $supported = 'diskstats|tcpbasics|log-nginx-v1|log-nginx-v2';
 
     if (!$ocollector_type) {
-        usage();
-        exit 1;
+        $ocollector_type = 'tcpbasics';
     } elsif ($ocollector_type !~ /^(?:$supported)/ixsm) {
-        print "[$ocollector_type] is not a supported collecting type, the following type is $supported supported.\n";
-        exit 1;
+        die "[$ocollector_type] is not a supported collecting type, the following type is $supported supported.\n";
     } else {
         1;
     }
@@ -434,19 +484,18 @@ sub main {
     for (;;) {
         # 只有metrics生成成功才发送，保证tsd那端不会受到乱七八糟的东西。
         if (my $results = prepare_metrics($ocollector_target, $ocollector_type, $params)) {
-            #print $results; exit;
             if (send_metrics($results, $ocollector_daemon, $ocollector_port)) {
                 if ($ocollector_verbose) {
-                    log_succeed("send_metrics() succeed:\n$results");
+                    log_succeed("send_metrics() succeed:\n$results") unless $ocollector_quiet;
                 } else {
-                    log_succeed("send_metrics() succeed.") ;
+                    log_succeed("send_metrics() succeed.") unless $ocollector_quiet;
                 }
             } else {
-                log_exception('send_metrics');
+                log_exception('send_metrics') unless $ocollector_quiet;
             }
         }
         else {
-            log_exception('prepare_metrics');
+            log_exception('prepare_metrics') unless $ocollector_quiet;
         }
 
         sleep($ocollector_interval);
