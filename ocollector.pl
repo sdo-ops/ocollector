@@ -10,6 +10,8 @@ use POSIX qw( strftime );
 use Getopt::Long;
 use IO::Socket;
 use File::ReadBackwards;
+use Sys::Statistics::Linux::DiskUsage;
+
 #use Data::Dumper;
 
 # Hacked oneline to remove dependency on version module, which requires a XS file that we can't pack.
@@ -28,6 +30,27 @@ my $re_status = qr/\d{3}|-/ixsm;
 my $re_cost = qr/(?:\d+\.\d+|-)/ixsm;
 my $re_error = qr/(?:5\d{2})/ixsm; # 目前仅认为5xx是错误，400不算
 my $re_static = qr/\.(?:gif|png|jpg|jpeg|js|css|swf)/ixsm;
+
+sub flush_tmpfs {
+    my $lxs = Sys::Statistics::Linux::DiskUsage->new;
+    my $stat = $lxs->get;
+    my $threshold = 10;
+
+    if (exists $stat->{tmpfs}) {
+        my ($free, $total) = ($stat->{tmpfs}->{free}, $stat->{tmpfs}->{total});
+
+        # 大小为0的tmpfs可能存在么？
+        if ($total >= 0) {
+            my $left = sprintf("%.2f", ($total - $free)/$total*100);
+            # 低于这点时开始flush 
+            if ($left <= $threshold) {
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
 
 sub parse_http_nginx_v2 {
     my ($timefrm, $logfile) = @_;
@@ -210,6 +233,16 @@ sub prepare_metrics {
         }
     }
     elsif ($type eq 'log-nginx-v2') {
+
+        # 如果不知道是不是在tmpfs上，我们也可以flush一下。
+        # tmpfs少了，说不定就是我们引起的。
+        if (flush_tmpfs()) {
+            system '>' . $params->{nginx_log};
+
+            # flush后日志为空，本次prepare_metrics失败。 
+            return 0;
+        }
+
         my ($rc_dynamic, $rc_total)  = parse_http_nginx_v2($params->{last_n}, $params->{nginx_log});
 
         my $interval = $params->{last_n};
