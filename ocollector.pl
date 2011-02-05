@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # author:        yanglei@snda.com
-# last modified: 2011-02-03
+# last modified: 2011-02-05
 # description:   this script collects interesting data then send to some place for scrunity.
 
 use strict;
@@ -9,15 +9,18 @@ use File::Path;
 use POSIX qw( strftime );
 use Getopt::Long;
 use IO::Socket;
-use Error;
-use version;
 use File::ReadBackwards;
-use Regexp::Common qw/ net URI /;
-use Net::Address::IP::Local;
 #use Data::Dumper;
 
+# Hacked oneline to remove dependency on version module, which requires a XS file that we can't pack.
+use Net::Address::IP::Local;
+
+# GLOBALS
 my $O_ERROR = '';
-my $re_ipv4 = $RE{net}{IPv4};
+
+# Those regular expressions are stoled from Regex::Common
+# but zero-dependency is more important for us.
+my $re_ipv4 = qr/(?:(?:25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](?:25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](?:25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](?:25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/ixsm;
 my $re_domain = qr/(?:[0-9A-Za-z](?:(?:[-A-Za-z0-9]){0,61}[A-Za-z0-9])?(?:\.[A-Za-z](?:(?:[-A-Za-z0-9]){0,61}[A-Za-z0-9])?)*)/ixsm;
 my $re_uri = qr/[^ ]+/ixsm;
 my $re_msec = qr/\d{10}\.\d{3}/ixsm;
@@ -25,21 +28,6 @@ my $re_status = qr/\d{3}|-/ixsm;
 my $re_cost = qr/(?:\d+\.\d+|-)/ixsm;
 my $re_error = qr/(?:5\d{2})/ixsm; # 目前仅认为5xx是错误，400不算
 my $re_static = qr/\.(?:gif|png|jpg|jpeg|js|css|swf)/ixsm;
-
-# my $str = 'cas.sdo.com';
-# print "$1\n" if $str =~ /($re_domain)/; exit;
-
-# supported tag
-# upstream=ip
-# host=dns_name
-# error_rate
-
-# web.error.dynamic.5min
-# web.error.total.5min
-# web.latency.dynamic.5min
-# web.latency.total.5min
-# web.throughput.dynamic.5min
-# web.throughput.total.5min
 
 sub parse_http_nginx_v2 {
     my ($timefrm, $logfile) = @_;
