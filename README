@@ -1,4 +1,0 @@
-ocollector collects data by type, then send to opentsdb.
-The philosophy is easy use and fast deploy.
-
-To get it, you can: curl -LO http://op.sdo.com/download/ocollector or wget -q http://op.sdo.com/download/ocollector

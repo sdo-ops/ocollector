@@ -1,0 +1,55 @@
+ocollector
+========
+ocollector通过内置的多种数据收集器进行数据处理与合并，发送到opentsdb中。
+
+有别于其他客户端的地方，
+
+* 尽量不重新造轮子： 做其他开源项目没做过的。
+* 部署简单： 不需要安装任何模块，程序只有一个文件。
+* 支持Windows和Linux：Windows和Linux使用相同的程序。
+* 快速扩展：开发一个新收集器不会影响老的。因为只有一个文件，更新简便。
+
+使用方式
+---------------
+### Windows
+#### Cygwin
+如果使用cygwin且装了curl或wget，那么
+
+    $ curl -LO op.sdo.com/download/ocollector
+    $ wget -q  op.sdo.com/download/ocollector
+
+否则就得下载后上传到目标服务器。
+    
+#### 可以安装Perl到服务器
+对于没Perl环境（cygwin默认就有Perl），推荐安装[ActivePerl](http://www.activestate.com/activeperl/downloads)。
+
+#### 只能运行exe
+目前还没有编译为exe，未来会加。
+
+### Linux, etc.
+Linux只要：
+
+    $ curl -LO op.sdo.com/download/ocollector
+    $ wget -q  op.sdo.com/download/ocollector
+
+*关于找不到Error.pm和version.pm*
+如运行时报找不到Error.pm或是version.pm，请去[Issue](https://github.com/op-sdo-com/ocollector/issues)中提交。
+然后用yum安装，先用起来：
+
+    $ yum -y install Perl-Error Perl-version
+
+
+收集器介绍
+---------------
+目前有的收集类型：
+
+1. nginx日志
+2. iis5, iis5日志
+3. linux的tcp连接信息（当前连接数、连接重置数等）
+4. linux的磁盘信息，支持任意多个磁盘。
+
+详细请参考：`./ocollector -h`的输出
+
+
+实现细节
+---------------
