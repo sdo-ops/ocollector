@@ -21,7 +21,7 @@ ocollector通过内置的多种数据收集器进行数据处理与合并，发�
 否则就得下载后上传到目标服务器。
     
 #### 可以安装Perl到服务器
-对于没Perl环境（cygwin默认就有Perl），推荐安装[ActivePerl](http://www.activestate.com/activeperl/downloads)。
+对于没Perl环境（cygwin默认就有Perl），推荐安装[ActivePerl](http://www.activestate.com/activeperl/downloads)
 
 #### 只能运行exe
 目前还没有编译为exe，未来会加。
@@ -33,8 +33,9 @@ Linux只要：
     $ wget -q  op.sdo.com/download/ocollector
 
 *关于找不到Error.pm和version.pm*
-如运行时报找不到Error.pm或是version.pm，请去[Issue](https://github.com/op-sdo-com/ocollector/issues)中提交。
-然后用yum安装，先用起来：
+
+某些环境偶尔会报找不到Error.pm或是version.pm，请去[Issue](https://github.com/op-sdo-com/ocollector/issues)中提交。
+然后用yum安装（先用起来）：
 
     $ yum -y install Perl-Error Perl-version
 
@@ -45,11 +46,17 @@ Linux只要：
 
 1. nginx日志
 2. iis5, iis5日志
-3. linux的tcp连接信息（当前连接数、连接重置数等）
-4. linux的磁盘信息，支持任意多个磁盘。
+3. linux的的`netstat -st`（当前连接数、连接重置数等）
+4. linux的`/proc/diskstats`，支持任意多个磁盘。
 
 详细请参考：`./ocollector -h`的输出
 
 
 实现细节
 ---------------
+
+### Nginx日志
+
+### IIS日志
+
+### Linux disksats
