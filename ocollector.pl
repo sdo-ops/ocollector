@@ -236,7 +236,7 @@ sub parse_http_nginx_v1 {
 
 sub get_tcpbasic {
     my $output = `netstat -st`;
-    my $want_re = qr/((?:active\sconnections\sopenings)|(?:passive\sconnection\sopenings)|(?:failed\sconnection\sattempts)|(?:connection\sresets\sreceived)|(?:connections\sestablished))/ixsm;
+    my $want_re = qr/((?:active\sconnections\sopenings)|(?:passive\sconnection\sopenings)|(?:failed\sconnection\sattempts)|(?:connection\sresets\sreceived)|(?:connections\sestablished)|(?:resets\ssent))/ixsm;
 
     #  Tcp:
     #      759262422 active connections openings
@@ -244,6 +244,7 @@ sub get_tcpbasic {
     #      2406493 failed connection attempts
     #      2227918 connection resets received
     #      47 connections established
+    #      35 resets sent 
     my $rc;
     foreach (split /\n/, $output) {
         next unless $_ =~ $want_re;
@@ -258,7 +259,7 @@ sub get_tcpbasic {
         $rc->{$metric} = $count;
 
         # early break
-        if ($line =~ /connections\sestablished/ixsm) {
+        if ($line =~ /resets\ssent/ixsm) {
             last;
         }
     }
