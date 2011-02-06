@@ -43,6 +43,10 @@ my $re_dynamic_err = qr/(?:5\d{2})/ixsm;
 my $re_static = qr/\.(?:gif|png|jpg|jpeg|js|css|swf)/ixsm;
 my $re_iis_logfile = qr/^ex\d{6}\.log$/ixsm;
 
+# damn it, the position is not same between iis5 and iis6
+my $re_iis6 = qr/^($re_iis_time) \s ($re_ipv4) \s (?:\w+) \s ($re_uri) \s (?:$re_qstring) \s ($re_ipv4) \s ($re_status) \s ($re_cost)/ixsm;
+my $re_iis5 = qr/^($re_iis_time) \s ($re_ipv4) \s ($re_ipv4) \s (?:\w+) \s ($re_uri) \s (?:$re_qstring) \s ($re_status) \s ($re_cost)/ixsm;
+
 
 # START OF HELPER FUNCTIONS
 sub determin_iislog {
@@ -102,7 +106,7 @@ sub flush_tmpfs {
 # END OF HELPER FUNCTIONS
 
 sub parse_http_iis_v1 {
-    my ($timefrm, $logfile, $user_given_domain) = @_;
+    my ($timefrm, $logfile, $user_given_domain, $iis_version) = @_;
 
     my $stop = time() - $timefrm;
 
@@ -113,37 +117,49 @@ sub parse_http_iis_v1 {
         BACKWARD_READ:
         while (defined (my $line = $bw->readline)) {
             chomp $line;
-            next if $line =~ /^#/; # 略过header
-            if ($line =~ /^($re_iis_time) \s ($re_ipv4) \s (?:\w+) \s ($re_uri) \s (?:$re_qstring) \s ($re_ipv4) \s ($re_status) \s ($re_cost)/ixsm) {
-                my ($msec, $host, $uri, $client, $status, $cost) = ($1, $2, $3, $4, $5, $6);
+            next BACKWARD_READ if $line =~ /^#/; # 略过header
 
-                $msec = str2time($msec) + 3600*8; # 调整到东8区，IIS永远记录的是UTC时间
-                if ($msec < $stop) {
-                    last BACKWARD_READ;
+            my ($msec, $host, $uri, $client, $status, $cost);
+            if ($iis_version == 6) {
+                if ($line =~ $re_iis6) {
+                    ($msec, $host, $uri, $client, $status, $cost) = ($1, $2, $3, $4, $5, $6);
                 } else {
-                    if ($uri !~ $re_static) {
-                        if ($status =~ /$re_dynamic_err/) {
-                            $rc_dynamic->{$user_given_domain}->{$host}->{error}++;
-                        }
+                    next BACKWARD_READ;
+                }
+            } else {
+                if ($line =~ $re_iis5) {
+                    ($msec, $client, $host, $uri, $status, $cost) = ($1, $2, $3, $4, $5, $6);
+                } else {
+                    next BACKWARD_READ;
+                }
+            }
 
-                        if ($cost > 0) { # 为0的time taken不计算，不可靠
-                            $rc_dynamic->{$user_given_domain}->{$host}->{latency} += $cost;
-                            $rc_dynamic->{$user_given_domain}->{$host}->{latency_throughput}++;
-                        }
-
-                        $rc_dynamic->{$user_given_domain}->{$host}->{throughput}++;
-                    } else {
-                        if ($status =~ /$re_static_err/) {
-                            $rc_static->{$user_given_domain}->{$host}->{error} = 0;
-                        }
-
-                        if ($cost > 0) { # 为0的time taken不计算，不可靠
-                            $rc_static->{$user_given_domain}->{$host}->{latency} += $cost;
-                            $rc_static->{$user_given_domain}->{$host}->{latency_throughput}++;
-                        }
-
-                        $rc_static->{$user_given_domain}->{$host}->{throughput}++;
+            $msec = str2time($msec) + 3600*8; # 调整到东8区，IIS永远记录的是UTC时间
+            if ($msec < $stop) {
+                last BACKWARD_READ;
+            } else {
+                if ($uri !~ $re_static) {
+                    if ($status =~ /$re_dynamic_err/) {
+                        $rc_dynamic->{$user_given_domain}->{$host}->{error}++;
                     }
+
+                    if ($cost > 0) { # 为0的time taken不计算，不可靠
+                        $rc_dynamic->{$user_given_domain}->{$host}->{latency} += $cost;
+                        $rc_dynamic->{$user_given_domain}->{$host}->{latency_throughput}++;
+                    }
+
+                    $rc_dynamic->{$user_given_domain}->{$host}->{throughput}++;
+                } else {
+                    if ($status =~ /$re_static_err/) {
+                        $rc_static->{$user_given_domain}->{$host}->{error} = 0;
+                    }
+
+                    if ($cost > 0) { # 为0的time taken不计算，不可靠
+                        $rc_static->{$user_given_domain}->{$host}->{latency} += $cost;
+                        $rc_static->{$user_given_domain}->{$host}->{latency_throughput}++;
+                    }
+
+                    $rc_static->{$user_given_domain}->{$host}->{throughput}++;
                 }
             }
         }
@@ -344,7 +360,7 @@ sub prepare_metrics {
         my $iis_logfile = determin_iislog($params->{iis_dir});
         return '' unless $iis_logfile;
 
-        my ($rc_dynamic, $rc_static)  = parse_http_iis_v1($params->{last_n}, $iis_logfile, $params->{user_given_domain});
+        my ($rc_dynamic, $rc_static)  = parse_http_iis_v1($params->{last_n}, $iis_logfile, $params->{user_given_domain}, $params->{iis_version});
 
         my $interval = $params->{last_n};
         my $metric_name;
@@ -536,6 +552,7 @@ Options:
     -t,--type                             Specify the collecting type, default: tcpbasics
 
     --domain                              The domain for iislog
+    --iis                                 Specify the version of IIS
 
 Types:
     tcpbasics                             Basic tcp connection info from netstat -st
@@ -598,12 +615,13 @@ sub log_exception {
 
 sub main {
     # options
-    my $ocollector_version      = q{};
+
     my $ocollector_daemon       = 'op.sdo.com';
     my $ocollector_port         = 4242;
     my $ocollector_proto        = 'tcp';
     my $ocollector_interval     = 15;
     my $ocollector_target       = q{};
+    my $ocollector_version      = q{};
     my $ocollector_type         = q{};
     my $ocollector_nginx_log    = q{};
     my $ocollector_log_lines    = q{};
@@ -612,7 +630,8 @@ sub main {
     my $ocollector_quiet        = q{};
     my $ocollector_iis_domain   = q{};
     my $ocollector_iis_dir      = q{};
-    my $help                    = q{};;
+    my $ocollector_iis_version  = q{};
+    my $help                    = q{};
 
     usage(1) if (@ARGV < 1);
 
@@ -632,6 +651,7 @@ sub main {
                "v|verbose" => \$ocollector_verbose,
                "V|version" => \$ocollector_version,
                "domain=s" => \$ocollector_iis_domain,
+               "iis=i" => \$ocollector_iis_version,
                "h|help" => \$help );
 
     if ($ocollector_version) {
@@ -668,11 +688,15 @@ sub main {
         $ocollector_log_lines = 60 unless $ocollector_log_lines;
         $ocollector_interval = 60 unless $ocollector_interval == 15;
 
+        unless ($ocollector_iis_version) {
+            $ocollector_iis_version = 6;
+        }
+
         if (!-d $ocollector_iis_dir) {
             die "IIS log directory does not exist: [$ocollector_iis_dir]\n";
         }
 
-        if ($ocollector_iis_domain eq '') { # 其实是iis，懒得改了
+        unless ($ocollector_iis_domain) { # 其实是iis，懒得改了
             die "IIS domain name is missing\n";
         }
     } else {
@@ -686,6 +710,7 @@ sub main {
     $params->{nginx_log}         = $ocollector_nginx_log;
     $params->{iis_dir}           = $ocollector_iis_dir;
     $params->{user_given_domain} = $ocollector_iis_domain;
+    $params->{iis_version}       = $ocollector_iis_version;
 
     $params->{virtual}   = 'no' unless $ocollector_virtual;
 
