@@ -370,6 +370,10 @@ Examples:
     ocollector -t diskstats -i 5                    # send diskstats to op.sdo.com every 5 seconds
     ocollector -t tcpbasics --virtual               # tag the host as a virtualized one
     ocollector -t log-nginx-v2 -a 30                # analyze nginx's metric log every 30 seconds
+    nohup ocollector --type log-nginx-v2 &          # damonize ocollector
+
+Notes:
+    Use "curl -LO http://op.sdo.com/download/ocollector" to grab the latest stable version.
 
 HELP
 
