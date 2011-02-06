@@ -11,6 +11,8 @@ use Getopt::Long;
 use IO::Socket;
 use File::ReadBackwards;
 use Sys::Statistics::Linux::DiskUsage;
+use Date::Parse;
+use File::Spec;
 #use Data::Dumper;
 
 # Hacked oneline to remove dependency on version module, which requires a XS file that we can't pack.
@@ -19,7 +21,7 @@ use Net::Address::IP::Local;
 use constant WIN32 => $^O eq 'MSWin32';
 use constant SUNOS => $^O eq 'solaris';
 
-our $VERSION = "1.01";
+our $VERSION = "1.02";
 $VERSION = eval $VERSION;
 
 
@@ -31,13 +33,50 @@ my $O_ERROR     = '';
 my $re_ipv4 = qr/(?:(?:25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](?:25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](?:25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](?:25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/ixsm;
 my $re_domain = qr/(?:[0-9A-Za-z](?:(?:[-A-Za-z0-9]){0,61}[A-Za-z0-9])?(?:\.[A-Za-z](?:(?:[-A-Za-z0-9]){0,61}[A-Za-z0-9])?)*)/ixsm;
 my $re_uri = qr/[^ ]+/ixsm;
+my $re_qstring = qr/(?:[^ ]+|-)/ixsm;
 my $re_msec = qr/\d{10}\.\d{3}/ixsm;
+my $re_iis_time = qr/\d{4}-\d{2}-\d{2} \s \d{2}:\d{2}:\d{2}/ixsm;
 my $re_status = qr/\d{3}|-/ixsm;
-my $re_cost = qr/(?:\d+\.\d+|-)/ixsm;
+my $re_cost = qr/(?:\d+\.\d+|-|\d+)/ixsm;
 my $re_static_err = qr/(?:5\d{2}|404)/ixsm;
 my $re_dynamic_err = qr/(?:5\d{2})/ixsm;
 my $re_static = qr/\.(?:gif|png|jpg|jpeg|js|css|swf)/ixsm;
+my $re_iis_logfile = qr/^ex\d{6}\.log$/ixsm;
 
+
+# START OF HELPER FUNCTIONS
+sub determin_iislog {
+    my $iis_directory = shift;
+
+    my $dir_fh;
+
+    opendir $dir_fh, $iis_directory;
+
+    unless ($dir_fh) {
+        $O_ERROR = "failed to open dir: $iis_directory";
+        return undef;
+    }
+
+    my $rc;
+    while ((my $filename = readdir($dir_fh))) {
+        # 跳过不符合IIS日志(ex110206.log)
+        next unless $filename =~ $re_iis_logfile;
+
+        # 然后取mtime最大的
+        my $full_filename = File::Spec->catfile($iis_directory, $filename);
+        my $mtime = (stat($full_filename))[9];
+        $rc->{$mtime} = $full_filename;
+    }
+
+    my @sorted = sort { $b <=> $a } keys %{$rc};
+    my $this_file = $rc->{$sorted[0]};
+
+    unless ($this_file) {
+        $O_ERROR = "failed to obtain iis logfile, no max mtime";
+    }
+
+    return $this_file;
+}
 
 sub flush_tmpfs {
     my $lxs = Sys::Statistics::Linux::DiskUsage->new;
@@ -58,6 +97,62 @@ sub flush_tmpfs {
     }
 
     return 0;
+}
+
+# END OF HELPER FUNCTIONS
+
+sub parse_http_iis_v1 {
+    my ($timefrm, $logfile, $user_given_domain) = @_;
+
+    my $stop = time() - $timefrm;
+
+    my ($rc_dynamic, $rc_static);
+
+    my $bw = File::ReadBackwards->new($logfile);
+    if ($bw) {
+        BACKWARD_READ:
+        while (defined (my $line = $bw->readline)) {
+            chomp $line;
+            next if $line =~ /^#/; # 略过header
+            if ($line =~ /^($re_iis_time) \s ($re_ipv4) \s (?:\w+) \s ($re_uri) \s (?:$re_qstring) \s ($re_ipv4) \s ($re_status) \s ($re_cost)/ixsm) {
+                my ($msec, $host, $uri, $client, $status, $cost) = ($1, $2, $3, $4, $5, $6);
+
+                $msec = str2time($msec) + 3600*8; # 调整到东8区，IIS永远记录的是UTC时间
+                if ($msec < $stop) {
+                    last BACKWARD_READ;
+                } else {
+                    if ($uri !~ $re_static) {
+                        if ($status =~ /$re_dynamic_err/) {
+                            $rc_dynamic->{$user_given_domain}->{$host}->{error}++;
+                        }
+
+                        if ($cost > 0) { # 为0的time taken不计算，不可靠
+                            $rc_dynamic->{$user_given_domain}->{$host}->{latency} += $cost;
+                            $rc_dynamic->{$user_given_domain}->{$host}->{latency_throughput}++;
+                        }
+
+                        $rc_dynamic->{$user_given_domain}->{$host}->{throughput}++;
+                    } else {
+                        if ($status =~ /$re_static_err/) {
+                            $rc_static->{$user_given_domain}->{$host}->{error} = 0;
+                        }
+
+                        if ($cost > 0) { # 为0的time taken不计算，不可靠
+                            $rc_static->{$user_given_domain}->{$host}->{latency} += $cost;
+                            $rc_static->{$user_given_domain}->{$host}->{latency_throughput}++;
+                        }
+
+                        $rc_static->{$user_given_domain}->{$host}->{throughput}++;
+                    }
+                }
+            }
+        }
+    } else {
+        $O_ERROR = "failed to open $logfile";
+        return undef;
+    }
+
+    return ($rc_dynamic, $rc_static);
 }
 
 sub parse_http_nginx_v2 {
@@ -243,7 +338,87 @@ sub prepare_metrics {
             return 0;
         }
     }
-    elsif ($type eq 'log-nginx-v2') {
+    elsif ($type eq 'log-iis-v1') {
+        # 从IIS文件夹从挑出mtime最大的作为本次扫描对象
+        my $iis_logfile = determin_iislog($params->{iis_dir});
+        return '' unless $iis_logfile;
+
+        my ($rc_dynamic, $rc_static)  = parse_http_iis_v1($params->{last_n}, $iis_logfile, $params->{user_given_domain});
+
+        my $interval = $params->{last_n};
+        my $metric_name;
+        if ($interval == 60) {
+            $metric_name = '1min';
+        } elsif ($interval == 300) {
+            $metric_name = '5min';
+        } else {
+            $metric_name = "${interval}sec";
+        }
+
+        if (defined $rc_dynamic) {
+            # 开始计算动态
+            foreach my $domain (keys %{$rc_dynamic}) {
+                foreach my $host (keys %{$rc_dynamic->{$domain}}) {
+                    # 如果error没有，我们这里补个0上去
+                    unless (exists $rc_dynamic->{$domain}->{$host}->{error}) {
+                        $rc_dynamic->{$domain}->{$host}->{error} = 0;
+                    }
+
+                    # 如果latency_throughput不存在，latency也必然不存在。为防止除0，设置latency_throughput = 1
+                    unless (exists $rc_dynamic->{$domain}->{$host}->{latency_throughput}) {
+                        $rc_dynamic->{$domain}->{$host}->{latency} = 0;
+                        $rc_dynamic->{$domain}->{$host}->{latency_throughput} = 1;
+                    }
+
+                    foreach my $item (keys %{$rc_dynamic->{$domain}->{$host}}) {
+                        next if $item eq 'latency_throughput';
+
+                        if ($item ne 'latency') { # 耗时的算法和其他不同
+                            $results .= sprintf("put iis.%s %d %d interval=%s host=%s domain=%s virtualized=%s type=dynamic\n",
+                                $item, time(), $rc_dynamic->{$domain}->{$host}->{$item},
+                                $metric_name, $target, $domain, $params->{virtual});
+                        } else {
+                            $results .= sprintf("put iis.%s %d %d interval=%s host=%s domain=%s virtualized=%s type=dynamic\n",
+                                $item, time(),
+                                ($rc_dynamic->{$domain}->{$host}->{$item}/$rc_dynamic->{$domain}->{$host}->{latency_throughput}),
+                                $metric_name, $target, $domain, $params->{virtual});
+                        }
+                    }
+                }
+            }
+        }
+
+        if (defined $rc_static) {
+            # 开始计算静态
+            foreach my $domain (keys %{$rc_static}) {
+                foreach my $host (keys %{$rc_static->{$domain}}) {
+                    unless (exists $rc_static->{$domain}->{$host}->{error}) {
+                        $rc_static->{$domain}->{$host}->{error} = 0;
+                    }
+
+                    unless (exists $rc_static->{$domain}->{$host}->{latency_throughput}) {
+                        $rc_static->{$domain}->{$host}->{latency} = 0;
+                        $rc_static->{$domain}->{$host}->{latency_throughput} = 1;
+                    }
+
+                    foreach my $item (keys %{$rc_static->{$domain}->{$host}}) {
+                        next if $item eq 'latency_throughput';
+
+                        if ($item ne 'latency') { # 耗时的算法和其他不同
+                            $results .= sprintf("put iis.%s %d %d interval=%s host=%s domain=%s virtualized=%s type=static\n",
+                                $item, time(), $rc_static->{$domain}->{$host}->{$item},
+                                $metric_name, $target, $domain, $params->{virtual});
+                        } else {
+                            $results .= sprintf("put iis.%s %d %d interval=%s host=%s domain=%s virtualized=%s type=static\n",
+                                $item, time(),
+                                ($rc_static->{$domain}->{$host}->{$item}/$rc_static->{$domain}->{$host}->{latency_throughput}),
+                                $metric_name, $target, $domain, $params->{virtual});
+                        }
+                    }
+                }
+            }
+        }
+    } elsif ($type eq 'log-nginx-v2') {
         # 如果不知道是不是在tmpfs上，我们也可以flush一下。
         # tmpfs少了，说不定就是我们引起的。
         if (flush_tmpfs()) {
@@ -354,26 +529,33 @@ Options:
     -i,--interval                         Number of seconds to wait before next send, default: 15
     -a,--amount                           Read this amount of logs, only lines and seconds are recognized, default: 60
     -l,--log                              The absolute path of the logfile to read from, default: /dev/shm/nginx_metrics/metrics.log
+    -e,--iisdir                           The absolute folder name of iislog
     -r,--target                           An arbitrary string used to identify this host, default to one's ip
     -u,--virtual                          Set this if the machine is a virtualized one, default: no
     -t,--type                             Specify the collecting type, default: tcpbasics
 
+    --domain                              The domain for iislog
+
 Types:
     tcpbasics                             Basic tcp connection info from netstat -st
     diskstats                             Disk devices stats from /proc/diskstats
-    log-nginx-v2                          Analyze customized nginx log: "\$msec \$host \$uri \$status \$upstream_addr \$upstream_response_time"
+    log-iis-v1                            Analyze customized IIS log, see iis log format in Notes.2
+    log-nginx-v2                          Analyze customized nginx log, see nginx log format in Notes.3
 
 Examples:
-    ocollector -v                                   # send tcpbasic stats to op.sdo.com every 15 seconds and print full results
-    ocollector -o metrics.sdo.com -p 3333           # send to metric.sdo.com:3333
-    ocollector -r mysql_master -t diskstats         # collect diskstats and identify the host by mysql_master 
-    ocollector -t diskstats -i 5                    # send diskstats to op.sdo.com every 5 seconds
-    ocollector -t tcpbasics --virtual               # tag the host as a virtualized one
-    ocollector -t log-nginx-v2 -a 30                # analyze nginx's metric log every 30 seconds
-    nohup ocollector --type log-nginx-v2 &          # damonize ocollector
+    ocollector -v                                                    # send tcpbasic stats to op.sdo.com every 15 seconds and print full results
+    ocollector -o metrics.sdo.com -p 3333                            # send to metric.sdo.com:3333
+    ocollector -r mysql_master -t diskstats                          # collect diskstats and identify the host by mysql_master 
+    ocollector -t diskstats -i 5                                     # send diskstats to op.sdo.com every 5 seconds
+    ocollector -t tcpbasics --virtual                                # tag the host as a virtualized one
+    ocollector -t log-nginx-v2 -a 30                                 # analyze nginx's metric log every 30 seconds
+    ocollector -t log-iis-v1 --domain "a.com" -e "e:\\\\W3SVC123"      # analyze iis website log whose domain is a.com
+    nohup ocollector --type log-nginx-v2 &                           # damonize ocollector
 
 Notes:
-    Use "curl -LO http://op.sdo.com/download/ocollector" to grab the latest stable version.
+    1. Use `curl -LO http://op.sdo.com/download/ocollector` to grab the latest stable version.
+    2. IIS log format: date time c-ip s-ip cs-method cs-uri-stem cs-uri-query sc-status time-take
+    3. Nginx log format: \$msec \$host \$uri \$status \$upstream_addr \$upstream_response_time
 
 HELP
 
@@ -427,6 +609,8 @@ sub main {
     my $ocollector_verbose      = q{};
     my $ocollector_virtual      = q{};
     my $ocollector_quiet        = q{};
+    my $ocollector_iis_domain   = q{};
+    my $ocollector_iis_dir      = q{};
     my $help                    = q{};;
 
     usage(1) if (@ARGV < 1);
@@ -440,11 +624,13 @@ sub main {
                "r|target=s" => \$ocollector_target,
                "t|type=s" => \$ocollector_type,
                "l|log=s" => \$ocollector_nginx_log,
+               "e|iisdir=s" => \$ocollector_iis_dir,
                "a|amount=i" => \$ocollector_log_lines,
                "q|quiet" => \$ocollector_quiet,
                "u|virtual" => \$ocollector_virtual,
                "v|verbose" => \$ocollector_verbose,
                "V|version" => \$ocollector_version,
+               "domain=s" => \$ocollector_iis_domain,
                "h|help" => \$help );
 
     if ($ocollector_version) {
@@ -454,7 +640,7 @@ sub main {
 
     usage(2) if $help;
 
-    my $supported = 'diskstats|tcpbasics|log-nginx-v1|log-nginx-v2';
+    my $supported = 'diskstats|tcpbasics|log-nginx-v1|log-nginx-v2|log-iis-v1';
 
     if (!$ocollector_type) {
         $ocollector_type = 'tcpbasics';
@@ -469,18 +655,36 @@ sub main {
         $ocollector_target = Net::Address::IP::Local->public_ipv4();
     }
 
-    # 如果没有指定，默认取前1分钟以及/dev/shm下的日志
+    # 每个collector自己的特殊配置
     if ($ocollector_type eq 'log-nginx-v2') {
+        # 如果没有指定，默认取前1分钟以及/dev/shm下的日志
+
         $ocollector_log_lines = 60 unless $ocollector_log_lines;
         $ocollector_nginx_log = '/dev/shm/nginx_metrics/metrics.log' unless $ocollector_nginx_log;
         $ocollector_interval = 60 unless $ocollector_interval == 15;
+    }
+    elsif ($ocollector_type eq 'log-iis-v1') {
+        $ocollector_log_lines = 60 unless $ocollector_log_lines;
+        $ocollector_interval = 60 unless $ocollector_interval == 15;
+
+        if (!-d $ocollector_iis_dir) {
+            die "IIS log directory does not exist: [$ocollector_iis_dir]\n";
+        }
+
+        if ($ocollector_iis_domain eq '') { # 其实是iis，懒得改了
+            die "IIS domain name is missing\n";
+        }
+    } else {
+        1;
     }
 
     # 如果某种类型的collector需要参数，通过统一的params扔进去。
     my $params;
 
-    $params->{last_n}    = $ocollector_log_lines;
-    $params->{nginx_log} = $ocollector_nginx_log;
+    $params->{last_n}            = $ocollector_log_lines;
+    $params->{nginx_log}         = $ocollector_nginx_log;
+    $params->{iis_dir}           = $ocollector_iis_dir;
+    $params->{user_given_domain} = $ocollector_iis_domain;
 
     $params->{virtual}   = 'no' unless $ocollector_virtual;
 
