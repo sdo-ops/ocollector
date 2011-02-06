@@ -19,7 +19,7 @@ cd release || exit 1
 fatpack trace $1
 fatpack packlists-for `cat fatpacker.trace` >packlists
 fatpack tree `cat packlists`
-(fatpack file; cat $1) >$1.tmp
+(fatpack file; cat $1) >$1.tmp 2>stderr.log
 
 final_script="release-$1"
 cd ..
