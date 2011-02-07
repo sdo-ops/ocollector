@@ -1,4 +1,7 @@
 release
 release-ocollector.pl*
+release-ocollector.exe*
+ocollector.perlapp
 a.pl
 b.txt
+win32lib
