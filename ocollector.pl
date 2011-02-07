@@ -682,11 +682,11 @@ sub main {
 
         $ocollector_log_lines = 60 unless $ocollector_log_lines;
         $ocollector_nginx_log = '/dev/shm/nginx_metrics/metrics.log' unless $ocollector_nginx_log;
-        $ocollector_interval = 60 unless $ocollector_interval == 15;
+        $ocollector_interval = 60 if $ocollector_interval == 15;
     }
     elsif ($ocollector_type eq 'log-iis-v1') {
         $ocollector_log_lines = 60 unless $ocollector_log_lines;
-        $ocollector_interval = 60 unless $ocollector_interval == 15;
+        $ocollector_interval = 60 if $ocollector_interval == 15;
 
         unless ($ocollector_iis_version) {
             $ocollector_iis_version = 6;
