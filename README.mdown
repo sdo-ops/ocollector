@@ -4,10 +4,65 @@ ocollector通过内置的多种数据收集器进行数据处理与合并，发�
 
 有别于其他客户端的地方，
 
-* 尽量不重新造轮子： 做其他开源项目没做过的。
-* 部署简单： 不需要安装任何模块，程序只有一个文件。
-* 支持Windows和Linux：Windows和Linux使用相同的代码。
-* 快速扩展：开发一个新收集器不会影响老的。因为只有一个文件，更新简便。
+* 零模块：不需要安装任何模块，程序只有一个文件。
+* 零安装：`./ocollector --help`，指定几个命令行参数，there you go!
+* 支持Windows和Linux：Windows和Linux使用相同的代码，Windows提供exe直接部署。
+* 版本迭代速度快：有了零部署的支持，我们来向hids展示什么叫plugin.
+* 有sdo特色的xx主义： 做其他开源项目没做过的，做适合于内部系统的，做我们觉得cool的
+
+问题
+---------------
+### tsd的接口已经够简单了，为什么还？
+
+yes，已经够简单了。`echo 'put blah blah blah...' | nc op.sdo.com 4242`
+
+但如果让10个人实现，第一个用nc，第二个用java写socket，第三个人php调tsd的REST接口，最后又乱了。
+
+所以应该禁止分裂，否则**OIWBID**
+
+> OIWBID = Otherwise I Will Burn it Down.
+
+> There should be one—and preferably only one—obvious way to do it. -- The Zen of Python
+
+### 那ocollector准备怎样？
+
++ 解决公司内Windows和Linux共存的问题
+
+    OK，任何脚本语言Perl, Ruby, Python都是跨操作系统的，但*脚本部署*什么都不跨。
+
+    Windows下Perl有`Cygwin, ActivePerl, Stawbarry Perl`三种， 乘以Windows32/64两个版本， 乘以Windows2K和Windows2K3，一共有12种可能。
+    
+    假设Linux上只有一种，那至少有13种组合，除去通用的多数，总有2,3个情况需要区别对待。
+    如果这些细节需要每个脚本考虑，那部署出去的脚本会乱成什么样子？
+
+    
++ 给定一个问题，只有一种最好实现，ocollector保证不是最差的。
+
+    例如，Windows和Linux取当前连接数，有以下几种做法：
+
+    1. Linux： `netstat -ant | grep -c 'ESTABLISHED'`
+    2. Linux： `netstat -st | grep -c 'connections established'`
+    3. Windows: `netstat -ano | grep -c 'ESTABLISED'`
+    4. Windows: `snmp -v 2c -c your_community some_oid_to_obtain_netstat`
+        
+其中2和3是很糟糕的做法，当连接数一多，就会耗用大量CPU.
+
+    $ time netstat -st | grep 'connections established'
+        12129 connections established
+        real    0m0.002s
+
+    $ time netstat -ant | grep -c 'ESTABLISHED'
+        11813
+        real    0m1.669s
+
+显示不是每人都知道哪种实现最好。 尽管ocollector也不能，但它可以修改内部实现，对外参数维持不变。否则今天是：`check_linux_connections.sh`, 明天是`check_linux_connectionsEx.sh`
+
+
+### 你又重新造轮子了？
+
+我们做出了一个艰难的决定：去*偷别人好的代码*，并把它转化为ocollector的类。
+现在请重新定义什么叫重新造轮子吧。
+
 
 使用方式
 ---------------
@@ -30,7 +85,7 @@ Linux只要：
         $ curl -LO op.sdo.com/download/ocollector
 
 
-FAQ
+安装时的问题
 ---------------
 
 + 提示找不到Error.pm和version.pm
@@ -62,9 +117,9 @@ FAQ
 ---------------
 目前有的收集类型：
 
-1. Nginx 日志
-2. IIS5, IIS6 日志
-3. Linux的`netstat -st`（当前连接数、连接重置数等）
-4. Linux的`/proc/diskstats`，支持任意多个磁盘。
+1. [Nginx 日志](https://github.com/op-sdo-com/ocollector/wiki/Nginx-Collector)
+2. [IIS5, IIS6 日志](https://github.com/op-sdo-com/ocollector/wiki/IIS-Collector)
+3. [Linux的`netstat -st`（当前连接数、连接重置数等）](https://github.com/op-sdo-com/ocollector/wiki/Linux-Netstat)
+4. [Linux的`/proc/diskstats`，支持任意多个磁盘。](https://github.com/op-sdo-com/ocollector/wiki/Linux-Diskstats)
 
-详细请参考：`./ocollector -h`的输出
+详细请参考：`./ocollector -h`的输出以及相关wiki。
