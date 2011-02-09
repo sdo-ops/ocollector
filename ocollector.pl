@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # author:        yanglei@snda.com
-# last modified: 2011-02-07
+# last modified: 2011-02-09
 # description:   this script collects interesting data then send to some place for scrunity.
 
 use strict;
@@ -13,8 +13,9 @@ use File::ReadBackwards;
 use Sys::Statistics::Linux::DiskUsage;
 use Date::Parse;
 use File::Spec;
-use Ocollector::ServiceMonitor::Memcached;
 use Data::Dumper;
+use Try::Tiny;
+use Ocollector::ServiceMonitor::Memcached;
 
 # Hacked oneline to remove dependency on version module, which requires a XS file that we can't pack.
 use Net::Address::IP::Local;
@@ -22,7 +23,7 @@ use Net::Address::IP::Local;
 use constant WIN32 => $^O eq 'MSWin32';
 use constant SUNOS => $^O eq 'solaris';
 
-our $VERSION = "1.03";
+our $VERSION = "1.04";
 $VERSION = eval $VERSION;
 
 
@@ -554,12 +555,14 @@ Options:
 
     --domain                              The domain for iislog
     --iis                                 Specify the version of IIS
+    --apparg                              application specific arguments, you can list them like: --apparg ostype=windows --apparg arch=x86_64
 
 Types:
     tcpbasics                             Basic tcp connection info from netstat -st
     diskstats                             Disk devices stats from /proc/diskstats
     log-iis-v1                            Analyze customized IIS log, see iis log format in Notes.2
     log-nginx-v2                          Analyze customized nginx log, see nginx log format in Notes.3
+    ServiceMonitor::Memcached             Parse server.check.sdo.com:5237's memcached log
 
 Examples:
     ocollector -v                                                    # send tcpbasic stats to op.sdo.com every 15 seconds and print full results
@@ -632,6 +635,7 @@ sub main {
     my $ocollector_iis_domain   = q{};
     my $ocollector_iis_dir      = q{};
     my $ocollector_iis_version  = q{};
+    my $ocollector_apparg       = q{};
     my $help                    = q{};
 
     usage(1) if (@ARGV < 1);
@@ -651,9 +655,11 @@ sub main {
                "u|virtual" => \$ocollector_virtual,
                "v|verbose" => \$ocollector_verbose,
                "V|version" => \$ocollector_version,
+               "h|help" => \$help,
                "domain=s" => \$ocollector_iis_domain,
                "iis=i" => \$ocollector_iis_version,
-               "h|help" => \$help );
+               "apparg=s%" => \$ocollector_apparg,
+   );
 
     if ($ocollector_version) {
         print "ocollector version: $VERSION\n";
@@ -662,7 +668,7 @@ sub main {
 
     usage(2) if $help;
 
-    my $supported = 'diskstats|tcpbasics|log-nginx-v1|log-nginx-v2|log-iis-v1';
+    my $supported = 'diskstats|tcpbasics|log-nginx-v1|log-nginx-v2|log-iis-v1|(?:\w+::\w+)';
 
     if (!$ocollector_type) {
         $ocollector_type = 'tcpbasics';
@@ -671,6 +677,9 @@ sub main {
     } else {
         1;
     }
+
+    # 如果某种类型的collector需要参数，通过统一的params扔进去。
+    my $params;
 
     # 如果不给出host，则自动获取IP
     if (!$ocollector_target) {
@@ -700,45 +709,80 @@ sub main {
         unless ($ocollector_iis_domain) { # 其实是iis，懒得改了
             die "IIS domain name is missing\n";
         }
-    } else {
+    }
+    elsif ($ocollector_type =~ /(?:\w+::\w+)/) {
+        # application specific type
+#       my $module;
+# try {
+#            $module = "Ocollector::$ocollector_type";
+#             require $module;
+#          } catch {
+#               die "$module hasn't been implemented\n";
+#            };
+
+            foreach my $arg (keys %{$ocollector_apparg}) {
+               $params->{$arg} = $ocollector_apparg->{$arg};
+          }
+     }
+    else {
         1;
     }
 
-    # 如果某种类型的collector需要参数，通过统一的params扔进去。
-    my $params;
 
     $params->{last_n}            = $ocollector_log_lines;
     $params->{nginx_log}         = $ocollector_nginx_log;
     $params->{iis_dir}           = $ocollector_iis_dir;
     $params->{user_given_domain} = $ocollector_iis_domain;
     $params->{iis_version}       = $ocollector_iis_version;
+    $params->{virtual}           = 'no' unless $ocollector_virtual;
 
-    $params->{virtual}   = 'no' unless $ocollector_virtual;
 
+    if ($ocollector_type =~ /(?:\w+::\w+)/) {
+        # 应用类型
+        my $module = "Ocollector::$ocollector_type";
+        my $ot = $module->new($params);
 
-    for (;;) {
-        # 只有metrics生成成功才发送，保证tsd那端不会受到乱七八糟的东西。
-        if (my $results = prepare_metrics($ocollector_target, $ocollector_type, $params)) {
-            if (send_metrics($results, $ocollector_daemon, $ocollector_port)) {
-                if ($ocollector_verbose) {
-                    log_succeed("send_metrics() succeed:\n$results") unless $ocollector_quiet;
+        for (;;) {
+            # 只有metrics生成成功才发送，保证tsd那端不会受到乱七八糟的东西。
+            if (my $results = $ot->show_results) {
+                if (send_metrics($results, $ocollector_daemon, $ocollector_port)) {
+                    if ($ocollector_verbose) {
+                        log_succeed("send_metrics() succeed:\n$results") unless $ocollector_quiet;
+                    } else {
+                        log_succeed("send_metrics() succeed.") unless $ocollector_quiet;
+                    }
                 } else {
-                    log_succeed("send_metrics() succeed.") unless $ocollector_quiet;
+                    log_exception('send_metrics') unless $ocollector_quiet;
                 }
             } else {
-                log_exception('send_metrics') unless $ocollector_quiet;
+                $O_ERROR = $ot->errormsg;
+                log_exception('prepare_metrics') unless $ocollector_quiet;
+                $ot->errormsg(q{});
             }
-        }
-        else {
-            log_exception('prepare_metrics') unless $ocollector_quiet;
-        }
 
-        sleep($ocollector_interval);
+            sleep($ot->interval);
+        }
+    } else {
+        # 内置类型
+        for (;;) {
+            if (my $results = prepare_metrics($ocollector_target, $ocollector_type, $params)) {
+                if (send_metrics($results, $ocollector_daemon, $ocollector_port)) {
+                    if ($ocollector_verbose) {
+                        log_succeed("send_metrics() succeed:\n$results") unless $ocollector_quiet;
+                    } else {
+                        log_succeed("send_metrics() succeed.") unless $ocollector_quiet;
+                    }
+                } else {
+                    log_exception('send_metrics') unless $ocollector_quiet;
+                }
+            }
+            else {
+                log_exception('prepare_metrics') unless $ocollector_quiet;
+            }
+
+            sleep($ocollector_interval);
+        }
     }
 }
 
-#main();
-
-my $o = Ocollector::ServiceMonitor::Memcached->new(logdir => '.', pattern => 'Log_MEMCACHE_CHECK_');
-$o->set_interval(2*86400);
-print Dumper($o->format_result($o->do_parse));
+main();
