@@ -13,7 +13,8 @@ use File::ReadBackwards;
 use Sys::Statistics::Linux::DiskUsage;
 use Date::Parse;
 use File::Spec;
-#use Data::Dumper;
+use Ocollector::ServiceMonitor::Memcached;
+use Data::Dumper;
 
 # Hacked oneline to remove dependency on version module, which requires a XS file that we can't pack.
 use Net::Address::IP::Local;
@@ -736,4 +737,8 @@ sub main {
     }
 }
 
-main();
+#main();
+
+my $o = Ocollector::ServiceMonitor::Memcached->new(logdir => '.', pattern => 'Log_MEMCACHE_CHECK_');
+$o->set_interval(2*86400);
+print Dumper($o->format_result($o->do_parse));
