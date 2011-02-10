@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # author:        yanglei@snda.com
-# last modified: 2011-02-09
+# last modified: 2011-02-10
 # description:   this script collects interesting data then send to some place for scrunity.
 
 use strict;
@@ -16,6 +16,7 @@ use File::Spec;
 use Data::Dumper;
 use Try::Tiny;
 use Ocollector::ServiceMonitor::Memcached;
+use Ocollector::AccountServer::StatisticDetails;
 
 # Hacked oneline to remove dependency on version module, which requires a XS file that we can't pack.
 use Net::Address::IP::Local;
@@ -23,7 +24,7 @@ use Net::Address::IP::Local;
 use constant WIN32 => $^O eq 'MSWin32';
 use constant SUNOS => $^O eq 'solaris';
 
-our $VERSION = "1.04";
+our $VERSION = "1.05";
 $VERSION = eval $VERSION;
 
 
@@ -711,18 +712,9 @@ sub main {
         }
     }
     elsif ($ocollector_type =~ /(?:\w+::\w+)/) {
-        # application specific type
-#       my $module;
-# try {
-#            $module = "Ocollector::$ocollector_type";
-#             require $module;
-#          } catch {
-#               die "$module hasn't been implemented\n";
-#            };
-
-            foreach my $arg (keys %{$ocollector_apparg}) {
-               $params->{$arg} = $ocollector_apparg->{$arg};
-          }
+        foreach my $arg (keys %{$ocollector_apparg}) {
+            $params->{$arg} = $ocollector_apparg->{$arg};
+        }
      }
     else {
         1;
