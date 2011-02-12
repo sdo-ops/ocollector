@@ -52,7 +52,6 @@ sub show_results {
     if ($bw) {
         my $stop = time - $self->interval;
 
-        my $results;
         BACKWARD_READ:
         while (defined (my $line = $bw->readline)) {
             chomp $line;
@@ -66,11 +65,11 @@ sub show_results {
             my $sec = str2time($time);
             if ($sec >= $stop) {
                 # 过滤掉非CacheInfo的
-                if ($line =~ /\s* \[CacheInfo\] \s* /ixsm) {
-                    my ($totalcount, $trustcache, $cachesucc) = ($line =~ / \[TotalCount:\s*(\d+)\] \s* \[TrustCache:\s*(\d+)\] \s* \[CacheSucc:\s*(\d+)\]/ixsm);
-                    $results .= sprintf("put AccsvrStats.Cache.TotalCount %d %d\n", time, $totalcount);
-                    $results .= sprintf("put AccsvrStats.Cache.TrustCache %d %d\n", time, $trustcache);
-                    $results .= sprintf("put AccsvrStats.Cache.CacheSucc %d %d\n", time, $cachesucc);
+                if ($line =~ /\[TotalCount:\s*(\d+)\] \s* \[TrustCache:\s*(\d+)\] \s* \[CacheSucc:\s*(\d+)\]/ixsm) {
+                    my ($totalcount, $trustcache, $cachesucc) = ($1, $2, $3);
+                    $results .= sprintf("put AccsvrStats.Cache.TotalCount %d %d %s\n", time, $totalcount, $self->{tag_partial});
+                    $results .= sprintf("put AccsvrStats.Cache.TrustCache %d %d %s\n", time, $trustcache, $self->{tag_partial});
+                    $results .= sprintf("put AccsvrStats.Cache.CacheSucc %d %d %s\n", time, $cachesucc, $self->{tag_partial});
                 }
 
                 next BACKWARD_READ;
