@@ -17,6 +17,7 @@ use Data::Dumper;
 use Try::Tiny;
 use Ocollector::ServiceMonitor::Memcached;
 use Ocollector::AccountServer::StatisticDetails;
+use Ocollector::AccountServer::Cache;
 
 # Hacked oneline to remove dependency on version module, which requires a XS file that we can't pack.
 use Net::Address::IP::Local;
@@ -24,7 +25,7 @@ use Net::Address::IP::Local;
 use constant WIN32 => $^O eq 'MSWin32';
 use constant SUNOS => $^O eq 'solaris';
 
-our $VERSION = "1.05";
+our $VERSION = "1.06";
 $VERSION = eval $VERSION;
 
 
