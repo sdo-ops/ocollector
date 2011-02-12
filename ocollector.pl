@@ -726,8 +726,12 @@ sub main {
     $params->{iis_dir}           = $ocollector_iis_dir;
     $params->{user_given_domain} = $ocollector_iis_domain;
     $params->{iis_version}       = $ocollector_iis_version;
-    $params->{virtual}           = 'no' unless $ocollector_virtual;
 
+    if ($ocollector_virtual) {
+        $params->{virtual} = 'yes';
+    } else {
+        $params->{virtual} = 'no';
+    }
 
     if ($ocollector_type =~ /(?:\w+::\w+)/) {
         # 应用类型
