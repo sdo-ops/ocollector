@@ -25,7 +25,7 @@ use Net::Address::IP::Local;
 use constant WIN32 => $^O eq 'MSWin32';
 use constant SUNOS => $^O eq 'solaris';
 
-our $VERSION = "1.05";
+our $VERSION = "1.06";
 $VERSION = eval $VERSION;
 
 
