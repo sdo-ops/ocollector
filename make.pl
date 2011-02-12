@@ -4,10 +4,11 @@ use strict;
 use warnings;
 use File::Spec;
 use Data::Dumper;
+use File::Slurp qw/slurp/;
 
 
 sub gen_lib {
-    my @want = qw{Common ServiceMonitor/Memcached AccountServer/StatisticDetails};
+    my @want = qw{Common ServiceMonitor/Memcached AccountServer/Cache AccountServer/StatisticDetails};
     my $base = '/usr/lib/perl5/site_perl/5.8.8';
     my $namespace = 'Ocollector';
     my $namespace_full = File::Spec->catfile($base, $namespace);
@@ -31,7 +32,10 @@ sub gen_auto {
         if ($lib !~ /\//) {
             $packlist = File::Spec->catfile($base, $namespace, '.packlist');
             $lib_path = $rc->{$lib};
-            system "echo \"$lib_path\" > $packlist";
+            my $content = slurp($packlist);
+            unless ($content =~ /$lib_path/) {
+                system "echo \"$lib_path\" >> $packlist";
+            }
         } else {
             my ($node) = ($lib =~ /(.*)\/.*$/ixsm);
             my $dir = File::Spec->catdir($base, $namespace, $node);
@@ -39,7 +43,11 @@ sub gen_auto {
 
             $lib_path = $rc->{$lib};
             $packlist = File::Spec->catfile($dir, '.packlist');
-            system "echo \"$lib_path\" > $packlist";
+
+            my $content = slurp($packlist);
+            unless ($content =~ /$lib_path/) {
+                system "echo \"$lib_path\" >> $packlist";
+            }
         }
 
         system "touch $lib_path";
