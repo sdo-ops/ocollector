@@ -60,7 +60,7 @@ sub show_results {
 
         my ($counter, $value) = ($1, $2);
         $counter =~ s/\s/_/g;
-        $results .= printf("put windows.netstat.tcp %d %.0f counter=%s %s\n", time, $value, $counter, $self->tag_partial);
+        $results .= sprintf("put windows.netstat.tcp %d %.0f counter=%s %s\n", time, $value, $counter, $self->tag_partial);
     }
 
     return $results;
