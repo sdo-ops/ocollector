@@ -8,7 +8,7 @@ use File::Slurp qw/slurp/;
 
 
 sub gen_lib {
-    my @want = qw{Common ServiceMonitor/Memcached AccountServer/Cache AccountServer/StatisticDetails};
+    my @want = qw{Common ServiceMonitor/Memcached AccountServer/Cache AccountServer/StatisticDetails CloudStat/Memory CloudStat/Cpu CloudStat/Disk};
     my $base = '/usr/lib/perl5/site_perl/5.8.8';
     my $namespace = 'Ocollector';
     my $namespace_full = File::Spec->catfile($base, $namespace);
