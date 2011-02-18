@@ -1,3 +1,4 @@
 /usr/lib/perl5/site_perl/5.8.8/Ocollector/CloudStat/Memory.pm
 /usr/lib/perl5/site_perl/5.8.8/Ocollector/CloudStat/Disk.pm
 /usr/lib/perl5/site_perl/5.8.8/Ocollector/CloudStat/Cpu.pm
+/usr/lib/perl5/site_perl/5.8.8/Ocollector/CloudStat/Wrapper.pm

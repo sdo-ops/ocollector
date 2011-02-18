@@ -24,9 +24,14 @@ sub new {
     $self->{errormsg}  = '';
 
     my @tags;
-    push @tags, 'host=' . Net::Address::IP::Local->public_ipv4;
+    if ($self->{prefer} && $self->{prefer} =~ /hostname/ixsm) {
+        push @tags, 'host=' . hostname;
+    } else {
+        push @tags, 'host=' . Net::Address::IP::Local->public_ipv4;
+    }
 
     $self->{tag_partial} = join(' ', @tags);
+    $self->{metric} = 'Cloud.HostStat.Memory';
 
 
     return bless $self, $class;
@@ -78,16 +83,17 @@ sub show_results {
     my $pmem_used_nod0  = $pmem->{used}  - $dom0->{used};
     my $pmem_usage_nod0 = ($pmem_used_nod0/$pmem_total_nod0)*100;
 
-    my $metric = 'Cloud.HostStat.Mem';
-
     my $results;
-    $results .= sprintf("put %s %d %d %s meminfo=used vname=all v=0\n", $metric, time, $pmem->{used}, $self->tag_partial);
-    $results .= sprintf("put %s %d %d %s meminfo=total vname=all v=0\n", $metric, time, $pmem->{total}, $self->tag_partial);
-    $results .= sprintf("put %s %d %d %s meminfo=usage vname=all v=0\n", $metric, time, $pmem->{usage}, $self->tag_partial);
+    my $metric = $self->metric;
+    my $tag_partial = $self->tag_partial;
 
-    $results .= sprintf("put %s %d %d %s meminfo=used vname=allv v=0\n", $metric, time, $pmem_used_nod0, $self->tag_partial);
-    $results .= sprintf("put %s %d %d %s meminfo=total vname=allv v=0\n", $metric, time, $pmem_total_nod0, $self->tag_partial);
-    $results .= sprintf("put %s %d %d %s meminfo=usage vname=allv v=0\n", $metric, time, $pmem_usage_nod0, $self->tag_partial);
+    $results .= sprintf("put %s %d %d %s meminfo=used vname=all v=0\n", $metric, time, $pmem->{used}, $tag_partial);
+    $results .= sprintf("put %s %d %d %s meminfo=total vname=all v=0\n", $metric, time, $pmem->{total}, $tag_partial);
+    $results .= sprintf("put %s %d %d %s meminfo=usage vname=all v=0\n", $metric, time, $pmem->{usage}, $tag_partial);
+
+    $results .= sprintf("put %s %d %d %s meminfo=used vname=allv v=0\n", $metric, time, $pmem_used_nod0, $tag_partial);
+    $results .= sprintf("put %s %d %d %s meminfo=total vname=allv v=0\n", $metric, time, $pmem_total_nod0, $tag_partial);
+    $results .= sprintf("put %s %d %d %s meminfo=usage vname=allv v=0\n", $metric, time, $pmem_usage_nod0, $tag_partial);
 
     return $results;
 }

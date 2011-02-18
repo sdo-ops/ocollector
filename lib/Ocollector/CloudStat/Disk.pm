@@ -3,6 +3,7 @@ package Ocollector::CloudStat::Disk;
 use strict;
 use warnings;
 use Net::Address::IP::Local;
+use Sys::Hostname;
 
 my @accessors = qw( tag_partial interval errormsg);
 
@@ -24,13 +25,19 @@ sub new {
     $self->{errormsg}  = '';
 
     my @tags;
-    push @tags, 'host=' . Net::Address::IP::Local->public_ipv4;
+    if ($self->{prefer} && $self->{prefer} =~ /hostname/ixsm) {
+        push @tags, 'host=' . hostname;
+    } else {
+        push @tags, 'host=' . Net::Address::IP::Local->public_ipv4;
+    }
 
     $self->{tag_partial} = join(' ', @tags);
+    $self->{metric} = 'Cloud.HostStat.Memory';
 
 
     return bless $self, $class;
 }
+
 
 # pdis_nod0=(`$VGS_CMD | tr -d 'G' | awk '/xenvg/{print $6,$7}'`)
 # pdis_total_nod0=${pdis_nod0[0]}
@@ -46,8 +53,6 @@ sub new {
 #   xenvg   1   6   0 wz--n- 689.61G 526.94G
 sub show_results {
     my $self = shift;
-
-    my $metric = 'Cloud.HostStat.Dis';
 
     # except domain 0
     my $vgs = `/usr/sbin/vgs --units G`;
@@ -65,9 +70,11 @@ sub show_results {
         $used = $total - $free;
         $usage = ($used/$total)*100;
 
-        $results .= sprintf("put %s %d %d %s disinfo=used vname=allv v=0\n", $metric, time, $used, $self->tag_partial);
-        $results .= sprintf("put %s %d %d %s disinfo=total vname=allv v=0\n", $metric, time, $total, $self->tag_partial);
-        $results .= sprintf("put %s %d %d %s disinfo=usage vname=allv v=0\n", $metric, time, $usage, $self->tag_partial);
+        my $metric = $self->metric;
+        my $tag_partial = $self->tag_partial;
+        $results .= sprintf("put %s %d %d %s disinfo=used vname=allv v=0\n", $metric, time, $used, $tag_partial);
+        $results .= sprintf("put %s %d %d %s disinfo=total vname=allv v=0\n", $metric, time, $total, $tag_partial);
+        $results .= sprintf("put %s %d %d %s disinfo=usage vname=allv v=0\n", $metric, time, $usage, $tag_partial);
     }
 
     return $results;

@@ -18,8 +18,7 @@ use Try::Tiny;
 use Ocollector::ServiceMonitor::Memcached;
 use Ocollector::AccountServer::StatisticDetails;
 use Ocollector::AccountServer::Cache;
-use Ocollector::CloudStat::Memory;
-use Ocollector::CloudStat::Disk;
+use Ocollector::CloudStat::Wrapper;
 
 # Hacked oneline to remove dependency on version module, which requires a XS file that we can't pack.
 use Net::Address::IP::Local;
