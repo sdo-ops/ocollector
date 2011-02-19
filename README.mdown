@@ -85,7 +85,7 @@ Linux只要：
         $ curl -LO op.sdo.com/download/ocollector
 
 
-安装时的问题
+FAQ
 ---------------
 
 + 提示找不到Error.pm和version.pm
