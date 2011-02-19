@@ -101,6 +101,10 @@ Linux只要：
 
         $ start /MIN perl ocollector /s /b *ocollection_options*
 
++ 如何不用服务也不哟啊框？
+
+    可利用cygwin的bash执行脚本，当cygwin的ssh超时时间到后，脚本就会成为一个没有框的进程。
+
 + Windows下远程桌面启动ocollector，会随着远程桌面退出而关闭
 
     因为会话被注销了。请先执行命令：`tscon 0`，然后启动ocollector。tscon命令参考这里：[Connect to Another Session by Using the TSCON Command](http://support.microsoft.com/kb/321703)
@@ -109,6 +113,6 @@ Linux只要：
 
 收集器介绍
 ---------------
-参考Wiki或内部metric说明website
+参考Wiki或内部metric介绍网站
 
 或者 `./ocollector -h`的输出以及相关wiki。
