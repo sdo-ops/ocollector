@@ -19,6 +19,7 @@ use Ocollector::ServiceMonitor::Memcached;
 use Ocollector::AccountServer::StatisticDetails;
 use Ocollector::AccountServer::Cache;
 use Ocollector::CloudStat::Wrapper;
+use Ocollector::Nginx::ErrorLog;
 
 # Hacked oneline to remove dependency on version module, which requires a XS file that we can't pack.
 use Net::Address::IP::Local;
