@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # author:        yanglei@snda.com
-# last modified: 2011-02-18
+# last modified: 2011-02-19
 # description:   this script collects interesting data then send to some place for scrunity.
 
 use strict;
@@ -27,7 +27,7 @@ use Net::Address::IP::Local;
 use constant WIN32 => $^O eq 'MSWin32';
 use constant SUNOS => $^O eq 'solaris';
 
-our $VERSION = "1.07";
+our $VERSION = "1.08";
 $VERSION = eval $VERSION;
 
 
