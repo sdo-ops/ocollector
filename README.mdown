@@ -95,12 +95,6 @@ Linux只要：
 
         $ yum -y install Perl-Error Perl-version
 
-+ 验证完整性？
-
-        $ curl -LO op.sdo.com/download/ocollector
-        $ curl -LO op.sdo.com/download/ocollector.md5sum
-        $ md5sum -c ocollector.md5sum
-
 + Windows中如何让命令在后台运行？
 
     见[Command Line Kung Fu](http://blog.commandlinekungfu.com/2009/04/episode-23-job-control.html)， 用start命令能模拟nohup，但的确还有一个框。未来会改为服务形式，但不是近阶段目标。
@@ -115,11 +109,6 @@ Linux只要：
 
 收集器介绍
 ---------------
-目前有的收集类型：
+参考Wiki或内部metric说明website
 
-1. [Nginx 日志](https://github.com/op-sdo-com/ocollector/wiki/Nginx-Collector)
-2. [IIS5, IIS6 日志](https://github.com/op-sdo-com/ocollector/wiki/IIS-Collector)
-3. [Linux的`netstat -st`（当前连接数、连接重置数等）](https://github.com/op-sdo-com/ocollector/wiki/Linux-Netstat)
-4. [Linux的`/proc/diskstats`，支持任意多个磁盘。](https://github.com/op-sdo-com/ocollector/wiki/Linux-Diskstats)
-
-详细请参考：`./ocollector -h`的输出以及相关wiki。
+或者 `./ocollector -h`的输出以及相关wiki。
